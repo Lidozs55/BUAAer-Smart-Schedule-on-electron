@@ -1,0 +1,186 @@
+# 04 · 数据与状态：放哪里、怎么放
+
+> 一句话规则：**会话日志是唯一真相，插件内存只是派生缓存**。凡是模型能看到的东西，都必须能从已提交的会话事件重建（fork / resume / replay 都从日志派生）。插件自己拥有的业务数据则放进受 schema 校验的持久 domain。
+
+---
+
+## 1. 五种"放数据的地方"，按用途选
+
+| 放在哪 | 生命周期 | 适合什么 | 不适合什么 |
+|---|---|---|---|
+| **Session 日志**（`ctx.sessionProjections` 派生） | 随 Session，可 fork/replay | 模型可见、与某次对话绑定的状态（"本会话的课程同步进度"） | 大对象、跨会话共享的业务数据 |
+| **存储 domain**（`ctx.storageDomain`） | 跨会话、跨重启 | 课程表、任务、日历条目、用户设置——本项目 95% 的数据 | 模型需要逐步推理的过程状态 |
+| **凭据**（`ctx.credentials`） | 跨重启 | 长期第三方 token | 一次性密码、业务数据 |
+| **插件配置**（`Config`） | 随 profile，升级保留 | 可调参数（提前提醒几分钟、是否自动同步） | 用户业务数据 |
+| **文件**（`ctx.fs`） | 视后端 | 导入/导出、备份 | 结构化查询（domain 更合适） |
+
+**绝对不要**：自己 `require('node:sqlite')` 开库、写 `localStorage` 存业务数据、给 Session 日志追加**新的事件类型**（`Session.append()` 设不了 `ignorable: true`，Session 会拒绝重开）。
+
+---
+
+## 2. 派生状态：`ctx.sessionProjections`
+
+```ts
+register<K extends keyof SessionProjectionMap, S extends SessionProjectionStateMap[K]>(
+  definition: Omit<ProjectionDefinition<K, S>, 'wire'> & { wire: NonNullable<ProjectionDefinition<K, S>['wire']> },
+): () => void                                     // 客户端可见的单元
+register<K extends Exclude<keyof SessionProjectionStateMap, keyof SessionProjectionMap>, S>(
+  definition: Omit<ProjectionDefinition<K, S>, 'wire'>,
+): () => void                                     // host-only 单元（不进客户端快照）
+onChanged(listener: ProjectionChangeListener): () => void
+stateOf<K>(session: Session, key: K): SessionProjectionStateMap[K] | undefined
+snapshot(session: Session, keys?: readonly string[]): ProjectionSnapshot
+cachedSnapshot(session: Session, keys?: readonly string[]): ProjectionSnapshot | undefined
+```
+
+```ts
+export interface ProjectionDefinition<K, S> {
+  key: K
+  stateSchema: ZodType<S>
+  init(header: SessionHeader, inheritedEventCount: SessionLogOffset): S
+  apply(state: S, event: SessionEvent): S
+  wire?: {
+    viewSchema: ZodType<SessionProjectionMap[K]>
+    view(state: S): SessionProjectionMap[K]
+  }
+  stateVersion: number
+}
+```
+
+要点：
+
+- 服务**只订阅一次 `session/event`**，每个已提交事件都会过每个单元的 `apply`（eager drive）。
+- `apply(state, event)` 必须是**纯的、同步的**，并且**对它忽略的事件返回同一个引用**——引用没变，下游就零成本；`view()` 返回同一引用时也就不会发布。
+- 注册是 effect：卸载插件的 key 会从快照里消失，客户端读到的是"能力缺失"。
+- key 共享：同一个 key 被注册 N 次就计数 N 次，直到最后一个卸载才消失。
+- 保持投影状态是**纯 JSON**；字段或折叠语义变了就 bump `stateVersion`（缓存检查点据此判断是否可用，陈旧检查点会被丢弃）。
+- 客户端需要的派生值声明成 `wire.view`，值在到达 Client 前就算好——**Client 不要自己折叠会话事件**。
+- host reader 要么在 `inject` 里声明 `sessionProjections`，要么在缺失时显式失败。
+
+**本项目的落点**：如果将来做"本周教学周次""今日未完成任务数"这类**会话内**展示，用投影；但课程表/任务本身是跨会话业务数据，属于 domain。
+
+---
+
+## 3. 持久业务数据：`ctx.storageDomain`
+
+`ctx.storage` 是枢纽（`mount(form, facility)` / `form(name)`），`ctx.storageDomain` 是已挂载的 **domain 形态**。**业务包只应该用 domain，不要直接碰 backend。**
+
+### 3.1 声明一个 domain
+
+```ts
+import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
+import { z } from 'zod'
+
+const taskSchema = z.object({
+  id: z.string(),
+  title: z.string(),
+  due: z.string().nullable(),          // RFC 3339；无截止时间用 null
+  priority: z.enum(['high', 'medium', 'low']),
+  completed: z.boolean(),
+  updatedAt: z.string(),
+})
+
+export const scheduleSpec = defineDomain({
+  name: 'buaaer_schedule',             // 必须匹配 UNIT_NAME_RE = /^[a-z][a-z0-9_]*$/
+  version: 1,
+  tables: {
+    tasks: domainTable(taskSchema),
+    courses: domainTable(courseSchema),
+    entries: domainTable(entrySchema),
+  },
+  global: {
+    schema: z.object({ buaaId: z.string().nullable() }),
+    initial: { buaaId: null },
+  },
+})
+```
+
+规则：
+
+- `defineDomain` 是**身份助手**，在**模块加载时**就大声失败：名字不符合 `UNIT_NAME_RE`、`version` 不是非负整数、global schema 接受 `null`（`null` 是后端"从未写入"的哨兵，可空 global 会与"缺失"混淆）——这几种都会抛。表名同样要匹配 `UNIT_NAME_RE`。
+- schema 用 **zod**（DSH 侧 `@deepseek-ai/dsh-storage-domain` 依赖 `zod@^4.4.3`）。本仓库的 bundle 需要自己声明 `zod` 依赖；版本要与 dsh 使用的大版本一致（结构兼容），落地前后用 `Config.listConfigs` 拿到的 `packageDir` 核对 dsh 实际装的版本。
+- `Spec` 可选字段：`layout?: 'single' | 'per-record'`、`compatibleVersions?: readonly number[]`、`invalidRecords?: 'backup-and-skip'`。
+- 每个 domain/表的名字同时是后端里的 unit 名与表名，**改名 = 数据迁移**，一开始就要定好。
+
+### 3.2 打开、使用、关闭
+
+```ts
+export const inject = ['storageDomain']
+
+export function apply(ctx) {
+  const opening = ctx.storageDomain.open(scheduleSpec)
+  let domain
+  ctx.effect(() => {
+    let closed = false
+    opening.then(d => {
+      if (closed) return d.close()
+      domain = d
+    })
+    return async () => { closed = true; await domain?.close() }
+  }, 'buaaer.domainClose')
+}
+```
+
+- `open(spec)` 会：拒绝已打开的名字（`already-open`）→ 解析 backend 路由（`backend-not-found`）→ 要求该 backend 有 `kv` facet（`facet-unsupported`）→ 打开 unit（后端 `version-mismatch` / `malformed-medium` 原样透出）→ **对每条已存记录按 spec 的 zod schema 校验**（`invalid-record` 会指出出错的表和 key；除非 spec 声明了 `invalidRecords: 'backup-and-skip'` 且 unit 能把坏文档挪走，此时坏记录被备份、记日志、跳过）→ 构造 domain。
+- **调用方拥有 handle**，要自己 `domain.close()`（通常就是自己的 `ctx.effect` disposer）；facility 卸载时会关掉仍开着的 domain，`closeAll()` 也是幂等的。
+- 读取**同步、从内存**：`domain.table('tasks').get(key)`。
+- 写入**异步且已持久**（后端确认后才 resolve），并按写序各发一次 `domain/changed`。
+
+`KvTable<K, V>`：
+
+```ts
+get(key: K): V | undefined
+entries(): IterableIterator<[K, V]>
+keys(): IterableIterator<K>
+readonly size: number
+put(key: K, value: V): Promise<void>
+delete(key: K): Promise<boolean>
+update(key: K, fn: (current: V) => V): Promise<V>
+```
+
+`Domain` 还有 `global: { get(): G; set(value: G): Promise<void> }`（用 `global` 存单例事实，例如 `buaaId`）。
+
+错误码：`already-open` / `facet-unsupported` / `invalid-record` / `missing-key`（对不存在的记录 `update`）/ `closed`（关闭后的任何使用），后端错误如 `version-mismatch` 原样透出。**不要吞掉它们**——它们全都代表"代码和已存数据不一致"。
+
+路由（哪个 backend 服务哪个 domain）由 **`@deepseek-ai/dsh-storage-domain` 自己的 Config** 决定，不由插件决定：`backend`（必填，默认后端名）、`routes`（domain 名 → backend 名）。当前可用的 backend 形态只有 `domain` 一个；后端实例有 `@deepseek-ai/dsh-storage-json` 与 `@deepseek-ai/dsh-storage-sqlite`。
+
+---
+
+## 4. 本项目的数据设计（从 SQLite 4 张表搬过来）
+
+| 现有表 | 迁移落点 | 说明 |
+|---|---|---|
+| `user`（单例：`buaa_id`） | domain 的 `global` | 本来就是单例，global 正合适。**不要**搬 `password_hash`（现在是死字段）、`buaa_cookies`（进程内会话即可） |
+| `course` | `courses` 表 | key 用稳定 id；保留 `day_of_week` / `week_range`（"第 1-16 周"）语义——这是课程表的本质，不是冗余 |
+| `task` | `tasks` 表 | `deadline` 统一带时区的 ISO 8601；**顺手修掉**：`estimated_time` 在模型里根本不存在（见 `07` §6） |
+| `entries` | `entries` 表 | key 建议 `YYYY-MM-DD#<id>` 或 `id` + 一个"按日索引"记录，避免"取一周"退化成全表扫描 |
+| 提醒设置（`reminderSettings`） | 插件 `Config` | 用户可调、升级保留，正是 Config 的用途 |
+| 过期任务清理（现由 `GET /api/reminders/upcoming` 顺手删） | 明确的服务方法 | 读接口不要再有删除副作用 |
+
+设计要点：
+
+1. **时区只有一种语义**。现有代码把本地时间 `replace(tzinfo=None)` 当 UTC 存，前端又用 `toISOString()` 取 UTC 日期（见 `07` §6）。新实现统一"带偏移的 ISO 8601"，并在 schema 的字段 JSDoc/注释里写清。
+2. **key 设计决定读取成本**。`KvTable` 只有 `get` / `entries` / `keys` / `size`——没有查询语言。要"取某周条目"就必须让 key 前缀或索引记录支持它，别指望全表遍历在生产量级下没事。
+3. **schema 版本**：表结构变更时 bump `version`，需要兼容旧数据就把旧版本号写进 `compatibleVersions`。
+4. **不要重复存提醒**：提醒的持久状态属于 `ctx.schedule`，自己的 domain 里只存业务事实（截止时间），不要镜像一份"是否已提醒"。
+5. **一次操作一个方法**：把"完成任务并更新对应条目颜色"做成**一个** domain 写序列（或用一次 `update`），不要留下写一半的状态。
+
+---
+
+## 5. 凭据
+
+- `CredentialRef`（环境变量名那一套）：**按操作解析，不要跨操作缓存**——这正是"轮换后下一次操作就生效"的机制；空值一律等于未配置。
+- `CredentialKey`（插件持有的凭据）：`modifyRecord(key, mutate)` 是**唯一**写路径，`mutate` 在写独占的那一刻看到当前值，返回 `undefined` 表示不动；跨进程互斥由后端提供，token 刷新才安全。
+- 本项目：BUAA 密码**不要**存（它是一次性交互凭据，现在也没存，保持住）；确实需要长期保存的第三方 token 才用 record。
+
+---
+
+## 6. 检查清单
+
+- [ ] 重启 Host 后数据仍在，且能通过同一套 domain 读回来。
+- [ ] `open()` 失败路径（backend 未配置、facet 不支持、记录不合 schema）都被显式处理或大声失败，而不是静默降级成"没有数据"。
+- [ ] 写操作 resolve 之后立刻读能读到新值（`put` 已持久）。
+- [ ] 没有把模型可见状态只放在插件内存里。
+- [ ] 没有给 Session 日志加新事件 `type`。
+- [ ] Client 半没有把业务数据持久化在浏览器里（只允许纯 UI 偏好）。
+- [ ] 时间字段只有一种时区语义，并有注释说明。

@@ -1,4 +1,27 @@
-# 北航智能日历系统 - Electron 桌面版
+# BUAAer 智能日程
+
+> **当前状态（2026-10-17）**：本仓库正在从「Electron + Flask + Vue 桌面应用」迁移为 **DSH（DeepSeek Harness）Cordis 插件**。新实现已写完、尚未在宿主中验收；旧实现保留至验收通过后删除。
+
+## 迁移后的形态（当前主开发线）
+
+```
+dsh-plugin/
+├── buaaer-schedule/                 # 主插件 @buaaer/dsh-schedule（Host + Client）
+│   ├── index.js                     # Host：domain + 服务 + 工具 + 命令 + /api 通道
+│   ├── host/…                       # semester/conflicts/sso/sync 等模块
+│   ├── client.js                    # Client 入口（分块装载）
+│   └── client.*.js                  # 日历/任务/剪贴板/设置各分块
+└── buaaer-schedule-reminders/       # 次级提醒插件 @buaaer/dsh-schedule-reminders
+```
+
+- 安装：`plugin_manager { action: "install_bundle", target: "<dsh-plugin/buaaer-schedule 绝对路径>" }`（次级插件同理）。
+- 设计/范围/拍板与验收台账：**`docs/dsh-plugin/00-migration-checklist.md`**（唯一执行台账）；DSH 插件开发参考：同目录 `01`–`08`。
+- 旧库迁移：`node scripts/export-legacy-db.mjs` 导出 JSON → 会话内 `/buaaer-import <路径>`（或设置页图形导入）。
+- 旧实现（`electron/`、`backend/`、`frontend/` 等）在对应验收通过前**保留不动**；下方文档描述的是旧形态，仅供考古。
+
+---
+
+# 旧实现文档（Electron 桌面版，迁移期保留）
 
 一个专为北航学生设计的智能日历系统，集成了课程管理、任务安排、智能输入和 LLM 辅助功能，帮助学生高效管理时间和任务。
 

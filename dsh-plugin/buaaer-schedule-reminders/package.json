@@ -1,0 +1,19 @@
+{
+  "name": "@buaaer/dsh-schedule-reminders",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "dependencies": {
+    "@deepseek-ai/dsh-storage-domain": "^0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.4",
+    "zod": "^4.4.3"
+  }
+}
