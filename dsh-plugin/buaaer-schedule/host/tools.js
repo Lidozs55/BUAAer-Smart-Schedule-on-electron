@@ -122,7 +122,7 @@ const TOOLS = [
   {
     name: 'buaaer_task_delete',
     method: 'deleteTask',
-    description: '删除一条任务（不可恢复；对应提醒由提醒插件自动撤销）。',
+    description: '删除一条任务（不可恢复；对应提醒会自动撤销）。',
     parameters: { id: { type: 'string', required: true, description: '任务 id' } },
     args: args => [args.id],
     summarize: () => '任务已删除',

@@ -1,13 +1,15 @@
 /**
  * Host half of @buaaer/dsh-schedule: opens the storage domain, exposes the
- * `buaaerSchedule` service, then wires tools, prompt section, commands,
- * the client `/api` channel, and the BUAA sync job. Optional seams are
- * read with `ctx.get` so a leaner profile degrades quietly instead of
- * failing activation.
+ * `buaaerSchedule` service, then wires tools, the reminder-mirroring
+ * subsystem, prompt section, commands, the client `/api` channel, and the
+ * BUAA sync job. Optional seams are read with `ctx.get` so a leaner
+ * profile degrades quietly instead of failing activation.
  */
+import Schema from '@deepseek-ai/schemastery'
 import { registerScheduleCommands } from './host/commands.js'
 import { scheduleDomainSpec } from './host/domain.js'
 import { registerClientApi } from './host/api.js'
+import { attachReminders } from './host/reminders.js'
 import { createScheduleService } from './host/service.js'
 import { registerScheduleTools } from './host/tools.js'
 import { startSyncJob } from './host/sync.js'
@@ -15,7 +17,15 @@ import { termWeek, today } from './host/semester.js'
 
 export const inject = ['storageDomain', 'tools']
 
-export async function apply(ctx) {
+/** Reminder kill switch and lead times — the plugin's only Config. */
+export const Config = Schema.object({
+  remindersEnabled: Schema.boolean().default(true).description('启用截止提醒（需宿主「自动化任务」bundle）'),
+  homeworkLeadMinutes: Schema.number().default(30).description('作业类提醒提前分钟数'),
+  examLeadMinutes: Schema.number().default(1440).description('考试类提醒提前分钟数'),
+  otherLeadMinutes: Schema.number().default(30).description('其他任务提醒提前分钟数'),
+})
+
+export async function apply(ctx, config) {
   // open() throws loudly on backend/facet/schema mismatch — activation
   // must fail rather than present an empty schedule.
   const domain = await ctx.storageDomain.open(scheduleDomainSpec)
@@ -25,6 +35,9 @@ export async function apply(ctx) {
   ctx.effect(() => ctx.provide('buaaerSchedule', service), 'buaaer: service')
 
   ctx.effect(() => registerScheduleTools(ctx, service, { service, ctx }), 'buaaer: tools')
+
+  // Optional reminder mirroring (R2): owns its effect and degrades quietly.
+  attachReminders(ctx, service, config)
 
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt) {

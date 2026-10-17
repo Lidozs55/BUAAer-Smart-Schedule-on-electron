@@ -1,34 +1,21 @@
 /**
- * @buaaer/dsh-schedule-reminders — the satellite reminder plugin (R2).
+ * Reminder mirroring subsystem (R2): projects task deadlines into
+ * `ctx.schedule` one-shot `at` reminders bound to one dedicated delivery
+ * session. Everything here is deliberately optional and degrading —
+ * `schedule` (the「自动化任务」bundle) and `sessionController` are read with
+ * `ctx.get`, and open()/resync failures disable mirroring without ever
+ * taking the calendar down.
  *
- * Hard-injects the main plugin's `buaaerSchedule` service (main plugin
- * absent ⇒ this row stays quietly inactive) and mirrors task deadlines
- * into `ctx.schedule` one-shot `at` reminders bound to one dedicated
- * session. `ctx.schedule` itself is OPTIONAL (the「自动化任务」bundle) —
- * without it this plugin degrades to a log line, never an error.
+ * Bridge seam (dsh-vivarium, docs 09): future bridges consume
+ * `service.upcomingReminders()` for their bubble surface. Timing policy
+ * (lead minutes) lives here and nowhere else; delivery surfaces are the
+ * bridge's concern.
  *
- * ── Bridge seam (dsh-vivarium) ─────────────────────────────────────────
- * A future bridge plugin should attach HERE, not inside the main plugin:
- * consume `buaaerSchedule.subscribe()` (or this module's derived set) and
- * keep its own delivery surface. Nothing below may grow desktop-pet
- * concerns; nothing above may learn about delivery.
- * ────────────────────────────────────────────────────────────────────────
- *
- * Reminder identity: the schedule record's title starts with
- * `[buaaer:<taskId>]`, which is how resyncs recognize their own records
- * without extra storage.
+ * Reminder identity: schedule record titles start with `[buaaer:<taskId>]`,
+ * which is how resyncs recognize their own records without extra storage.
  */
-import Schema from '@deepseek-ai/schemastery'
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
-
-export const inject = ['buaaerSchedule']
-
-export const Config = Schema.object({
-  homeworkLeadMinutes: Schema.number().default(30).description('作业类提醒提前分钟数'),
-  examLeadMinutes: Schema.number().default(1440).description('考试类提醒提前分钟数'),
-  otherLeadMinutes: Schema.number().default(30).description('其他任务提醒提前分钟数'),
-})
 
 const remindersDomainSpec = defineDomain({
   name: 'buaaer_reminders',
@@ -56,23 +43,51 @@ const recordTaskId = title => {
 
 const recordAt = record => (record.at !== undefined ? new Date(record.at).getTime() : null)
 
-export async function apply(ctx, config) {
+/**
+ * Arm reminder mirroring on the caller's context. Safe to call
+ * unconditionally from `apply` — registers its own effect, never throws.
+ * @param {object} config - the plugin Config (enabled flag + lead minutes).
+ */
+export function attachReminders(ctx, service, config) {
   const schedule = ctx.get('schedule')
   const sessionController = ctx.get('sessionController')
-  const storageDomain = ctx.get('storageDomain')
+  if (!config.remindersEnabled) {
+    ctx.logger.info('buaaer-reminders: disabled by config')
+    return
+  }
   if (!schedule) {
-    ctx.logger.info('buaaer-reminders: ctx.schedule absent (enable「自动化任务」to arm reminders); plugin idles')
+    ctx.logger.info('buaaer-reminders: ctx.schedule absent (enable「自动化任务」to arm reminders); subsystem idles')
     return
   }
-  if (!sessionController || !storageDomain) {
-    ctx.logger.info('buaaer-reminders: session/storage seams absent in this profile; plugin idles')
+  if (!sessionController) {
+    ctx.logger.info('buaaer-reminders: sessionController seam absent in this profile; subsystem idles')
     return
   }
 
-  const service = ctx.buaaerSchedule
-  const domain = await storageDomain.open(remindersDomainSpec)
-  ctx.effect(() => () => { void domain.close() }, 'buaaer-reminders: domain close')
+  let closed = false
+  ctx.effect(() => {
+    let disposeWire = () => {}
+    // A reminder-store problem must disable mirroring, not the plugin.
+    void (async () => {
+      try {
+        const domain = await ctx.storageDomain.open(remindersDomainSpec)
+        if (closed) {
+          void domain.close()
+          return
+        }
+        disposeWire = wire(ctx, { service, config, schedule, sessionController, domain })
+      } catch (error) {
+        ctx.logger.warn('buaaer-reminders: mirroring disabled (%s)', error.message)
+      }
+    })()
+    return () => {
+      closed = true
+      disposeWire()
+    }
+  }, 'buaaer: reminders')
+}
 
+function wire(ctx, { service, config, schedule, sessionController, domain }) {
   let boundSessionId = domain.global.get().boundSessionId
 
   /** The one session reminders deliver into; created once, then reused. */
@@ -92,15 +107,20 @@ export async function apply(ctx, config) {
       const dueMs = new Date(task.due).getTime()
       const target = dueMs - leadMinutesFor(config, task.taskType) * 60_000
       if (!(target > now)) continue
-      const label = `${TITLE_PREFIX}${task.id}] ${task.title}`.slice(0, MAX_TITLE)
       desired.set(task.id, {
-        title: label,
+        taskId: task.id,
+        title: `${TITLE_PREFIX}${task.id}] ${task.title}`.slice(0, MAX_TITLE),
         at: new Date(target).toISOString(),
+        due: task.due,
+        taskType: task.taskType,
         prompt: `日程提醒：任务「${task.title}」将于 ${task.due} 截止（${task.taskType}）。请提醒用户。`,
       })
     }
     return desired
   }
+
+  // The one derived set (lead times applied) future bridges read.
+  service.upcomingReminders = () => [...desiredReminders().values()]
 
   let resyncing = false
   const resync = async () => {
@@ -139,9 +159,7 @@ export async function apply(ctx, config) {
     }
   }
 
-  ctx.effect(() => {
-    const dispose = service.subscribe(() => { void resync() })
-    void resync()
-    return dispose
-  }, 'buaaer-reminders: subscription')
+  const dispose = service.subscribe(() => { void resync() })
+  void resync()
+  return dispose
 }

@@ -374,11 +374,15 @@ export function createScheduleService(ctx, domain) {
       return revision
     },
 
-    /** Change notification for satellite plugins (reminders, later bridge). */
+    /** Change notification for the reminders subsystem and future bridges. */
     subscribe(listener) {
       listeners.add(listener)
       return () => listeners.delete(listener)
     },
+
+    /** Derived upcoming-reminder set; host/reminders.js overrides this
+     *  when the subsystem is armed (empty otherwise). */
+    upcomingReminders: () => [],
   }
 
   return service

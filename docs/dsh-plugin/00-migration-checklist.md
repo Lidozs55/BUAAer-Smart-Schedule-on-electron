@@ -11,7 +11,7 @@
 | # | 拍板内容 | 波及 |
 |---|---|---|
 | R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；**移除一切自主调色**（主题色选择、Entry 任意 hex 颜色）。条目颜色收敛为**语义类别枚举 → token 映射** | §3.1 / §3.6 / §4 |
-| R2 | **提醒整体拆到次级 plugin** `@buaaer/dsh-schedule-reminders`；与 dsh-vivarium 桌宠壳的**桥 plugin 本轮不实现**（只预留接口边界，见 §2.1） | §2 / §3.5 / M6 |
+| R2 | 提醒逻辑独立成主插件内的**提醒子系统**（`host/reminders.js`：可选 seam 判空降级 + `Config` 开关与提前量。2026-10-17 修订：原拟次级 plugin 并入主插件——零 UI 且对主插件硬依赖，独立成包无独立价值；真正的边界在"提醒策略（主插件）× 投递表面（桥）"）；与 dsh-vivarium 桌宠壳的**桥 plugin 本轮不实现**（接口边界见 §2.1 与 `09`） | §2 / §3.5 / M6 |
 | R3 | 主页**左右分栏（任务｜日历）→ 同一面板内切换页**（`日程 \| 任务` 两个 tab），按侧栏窄幅设计，压缩横向占宽 | §3.6 / §6 |
 | R3.1 | **无对话 session 的打开形式：暂缓**。root-scope `main`（非 `conversation` key）天然无 Session 绑定，纯查看已可用；卡点只在写路径与导入体验（D-1 / D-2），随它们一并解决 | §7 |
 | R4 | **插件内零 LLM 调用**。所有"智能解析/修改日程"= 用户新建 session，让 Agent 调本插件注册的**工具**完成。插件不配 prompt、不配 key、不配 SDK | §3.2 / §3.4 / §5 |
@@ -33,28 +33,23 @@
 
 | 包（建议名） | 角色 | 半侧 | 本轮 |
 |---|---|---|---|
-| `@buaaer/dsh-schedule`（row id `buaaer-schedule`） | **主插件**：storage domain、领域服务、Agent 工具、人类命令、UI 面板 ×2、设置节 | Host + Client | ✅ |
-| `@buaaer/dsh-schedule-reminders`（row id `buaaer-schedule-reminders`） | **次级插件**：提醒偏好 Config、`ctx.schedule` 登记/撤销、降级逻辑。Host-only，无 UI | Host | ✅ |
-| `@buaaer/dsh-vivarium-bridge`（暂名，位置未定） | **桥插件**：链接本侧插件与 `dsh-vivarium`（`@vivarium/*` 桌宠 base 壳）并新增联动功能（如桌宠播报提醒） | — | ⏸ 本轮不实现 |
+| `@buaaer/dsh-schedule`（row id `buaaer-schedule`） | **主插件**：storage domain、领域服务、Agent 工具、人类命令、UI 面板 ×2、设置节、**提醒子系统**（`host/reminders.js`，可选 seam + Config） | Host + Client | ✅ |
+| `@buaaer/dsh-vivarium-bridge`（暂名，位置未定） | **桥插件**：链接主插件与 `dsh-vivarium`（`@vivarium/*` 桌宠 base 壳）并新增联动功能（如桌宠播报提醒） | — | ⏸ 本轮不实现 |
 
-- 桥的对接对象按 R2 的意图是**次级提醒插件**（提醒是最自然的联动面）；桥落在哪个仓库、链接哪一侧，届时立项再定；职责边界与已定联动见 `09-vivarium-bridge.md`。
-- 次级插件通过 `inject: ['buaaerSchedule']` 硬依赖主插件服务（主插件不在则次级安静不激活，见 D-3 的暴露形态）。
-- 包名/row id 安装即绑定 profile，**改名 = 重装**；`@buaaer/dsh-schedule-reminders` 这类名字现在就要定死。
+- 桥的对接面是主插件服务：数据走 `listTasks`/`subscribe`，提醒派生集走 `upcomingReminders()`（提前量策略只此一处）；桥落在哪个仓库、链接哪一侧，届时立项再定；职责边界与已定联动见 `09-vivarium-bridge.md`。
+- 提醒子系统经 `attachReminders(ctx, service, config)` 挂进主插件 `apply`；`schedule`/`sessionController` 一律 `ctx.get` 判空（**绝不进 `inject`**——官方 profile 默认无「自动化任务」，硬注入会拖死整个日历）。
+- 包名/row id 安装即绑定 profile，**改名 = 重装**；`@buaaer/dsh-schedule` 现已定死。
 
 目录：
 
 ```
 dsh-plugin/
-├── buaaer-schedule/                 # 主插件
-│   ├── package.json                 # exports: "." / "./client"; dsh.bundle.patch + dsh.client
-│   ├── cordis.patch.yml
-│   ├── index.js                     # Host：domain + 服务 + 工具 + 命令 + prompt 段
-│   ├── client.js                    # Client：两个面板 + 设置节 + locale
-│   └── …（host/ 与 client 产物子文件按需拆，见 01 §2 手写产物约束）
-└── buaaer-schedule-reminders/       # 次级提醒插件（Host-only）
-    ├── package.json
+└── buaaer-schedule/                 # 主插件
+    ├── package.json                 # exports: "." / "./client"; dsh.bundle.patch + dsh.client
     ├── cordis.patch.yml
-    └── index.js
+    ├── index.js                     # Host：domain + 服务 + 工具 + 命令 + prompt 段 + Config + 提醒子系统装配
+    ├── client.js                    # Client：两个面板 + 设置节 + locale
+    └── …（host/ 与 client 产物子文件按需拆，见 01 §2 手写产物约束；reminders.js 为提醒子系统）
 ```
 
 ### 2.2 UI 面板与槽位布局
@@ -74,8 +69,8 @@ dsh-plugin/
 ```
 Client UI（渲染 + 交互） ──写路径 D-1──▶ Host 领域服务（唯一业务实现） ──▶ storageDomain（buaaer_schedule）
 session 内 Agent ──buaaer_* 工具（同一方法）──▶ ┘
-buaaer-schedule-reminders ──inject buaaerSchedule.subscribe()──▶ 截止变化 → ctx.schedule 登记/撤销
-（未来）vivarium-bridge ──▶ reminders 插件暴露的接口（本轮只保证边界干净，不实现）
+提醒子系统（主插件 host/reminders.js）──service.subscribe()──▶ 截止变化 → ctx.schedule 登记/撤销
+（未来）vivarium-bridge ──▶ service.upcomingReminders() / listTasks（本轮只保证边界干净，不实现）
 ```
 
 铁律：**一个操作只有一个实现**（Host 服务方法）；UI 写路径与工具调用同一方法（06 §4）。
@@ -96,7 +91,7 @@ buaaer-schedule-reminders ──inject buaaerSchedule.subscribe()──▶ 截�
 | `Task.urgency`（0-100 float） | ❌ | 不迁移 | 无任何视图消费的遗留字段 |
 | `Task.entry_id`（任务↔条目关联） | ✅ | `task.entryId`（存 entries 的 key） | "完成联动"改为**渲染层**按 `task.completed` 显示，不再改条目颜色/拼标题 `[任务已完成]` |
 | `Entry.color`（任意 hex，默认 `#4a90e2`） | 🔁 R1 | 删除字段；`entry_type` 升格为**类别枚举** | 类别 → token 集中映射一处（§4.3）；导入时旧 hex 不做反推，按 `entry_type` 归类 |
-| 提醒偏好（reminderSettings） | 🔁 R2 | 次级提醒插件的 `Config` | 主插件无任何提醒配置 |
+| 提醒偏好（reminderSettings） | 🔁 R2 | 主插件 `Config`（`remindersEnabled` 开关 + 三档提前量） | 分立插件时代"主插件无提醒配置"的约束随 R2 修订作废 |
 | 过期任务自动清理（挂在 `GET /api/reminders/upcoming` 的删除副作用） | 🐛❌ | 删除该行为 | 读接口不得有写副作用；过期任务由用户经工具/页面自行处理 |
 
 ### 3.2 Host 服务与 Agent 工具（= R4 的"session 内 LLM 接口"）
@@ -120,7 +115,7 @@ buaaer-schedule-reminders ──inject buaaerSchedule.subscribe()──▶ 截�
 |---|---|---|---|
 | SSO 登录（HTML 刮 `execution`） | ✅ | Host 服务内 `fetch`（Node，同进程） | 学号/密码**仅作当次调用入参**：来自会话内工具参数或设置节触发表单；绝不落盘、不进 Config、不进 credentials |
 | 逐日课表抓取 `detail.do`（×7，间隔 ~0.2s） | ✅🐛 | `ctx.jobs` 后台作业 + `buaaer_course_sync` 工具 + `/buaaer-sync` 命令 | `append()` 报逐日进度、可取消；**upsert 周期规则**，废除"先删全表再插" |
-| 考试安排 `exams.do` | ✅ | 并入同一 job | 产出 `task_type:'exam'` 的任务（供提醒插件消费） |
+| 考试安排 `exams.do` | ✅ | 并入同一 job | 产出 `task_type:'exam'` 的任务（供提醒子系统消费） |
 | 学期码规则（8-12 月 `{Y}-{Y+1}-1` 等）与请求头/UA/Referer | ✅ 原样 | Host 模块常量 | 学校侧要求，不是包袱 |
 | SSO 会话与 30min 空闲过期 | ✅ | 插件内存状态 | 不进 domain |
 | "删全表再插入"破坏性写 | 🐛❌ | 改为按去重键 upsert | 去重键：`(course_name, day_of_week, start_time, week_range)` |
@@ -136,17 +131,17 @@ buaaer-schedule-reminders ──inject buaaerSchedule.subscribe()──▶ 截�
 | 剪贴板队列 | ✅ R8 | 独立面板 `buaer-clipboard`：队列增删改排序（组件本地态） | 导入 = 拼装队列文本 → **新会话预填 composer**（D-2），用户确认发送，Agent 调批量工具落库 |
 | `_get_occupied_slots` 服务端自调 HTTP | 🐛❌ | 直接读 domain | 自调 `127.0.0.1:5000` 的路径随 Flask 一起消失 |
 
-### 3.5 提醒（整体 → 次级插件，R2）
+### 3.5 提醒（主插件内子系统，R2）
 
 | 原子功能 | 取舍 | 迁移形式 | 要点 |
 |---|---|---|---|
-| 60s 前端轮询 + Web Notification | 🔁 | 删除；次级插件用 `ctx.schedule` durable 提醒 | 投递形态 = **回原 Session 会话内提醒**（`[SCHEDULE REMINDER]`），不是系统弹窗——插件 UI 只在 Web 页面内，硬约束 |
-| 多级提前量（课程/作业/考试各自提前 X 分钟） | ✅ | 次级插件 `Config` + 为截止时间登记 `at` 提醒 | 提醒持久状态归 `ctx.schedule`；domain 不镜像"是否已提醒" |
-| 登记/撤销同步 | ✅ | `inject ['buaaerSchedule']` + `service.subscribe(listener)`，diff 后 create/delete | 任务删除/完成时撤销对应提醒 |
+| 60s 前端轮询 + Web Notification | 🔁 | 删除；提醒子系统用 `ctx.schedule` durable 提醒 | 投递形态 = **回绑定 Session 会话内提醒**（`[SCHEDULE REMINDER]`），不是系统弹窗——插件 UI 只在 Web 页面内，硬约束 |
+| 多级提前量（课程/作业/考试各自提前 X 分钟） | ✅ | 主插件 `Config` + 为截止时间登记 `at` 提醒 | 提醒持久状态归 `ctx.schedule`；domain 不镜像"是否已提醒" |
+| 登记/撤销同步 | ✅ | 提醒子系统 `service.subscribe(listener)`，diff 后 create/delete | 任务删除/完成时撤销对应提醒 |
 | 可用性降级 | ✅ | `ctx.get('schedule')` 判空 | Schedule 是可选 bundle（须启用「自动化任务」）；缺失时安静降级并在设置文档说明 |
 | 会话归档限制 | ✅ | 文档化告知 | 含活跃提醒的会话归档会被拒绝（05 §4） |
-| 桌宠播报（vivarium 联动） | ⏸ | 桥 plugin | 本轮只保证提醒插件对外接口边界干净 |
-| 主插件内一切提醒痕迹 | ❌ R2 | 主插件不 import schedule、不含提醒 Config/UI | — |
+| 桌宠播报（vivarium 联动） | ⏸ | 桥 plugin | 本轮只保证 `upcomingReminders()` 接口边界干净 |
+| 提醒逻辑的收拢 | ✅ R2 | 全部在 `host/reminders.js` 单模块 | `schedule`/`sessionController` 只经 `ctx.get`；子系统任何故障只降级、不影响日历主功能 |
 
 ### 3.6 Client UI（Vue → React，R1/R3/R10）
 
@@ -157,7 +152,7 @@ buaaer-schedule-reminders ──inject buaaerSchedule.subscribe()──▶ 截�
 | 撤销/重做（≤5 步） | ✅ | 组件本地撤销栈 `useUndo` | 不进 domain |
 | 周末/今日着色、工具栏 | ✅ | 组件 + token | 周末用 `bg-layer` 区分，不用颜色字面量 |
 | 任务侧栏 → 任务 tab | ✅ R3 | `TasksTab`：分组列表 + SVG 进度环 | `confirm()/alert()` 全部换 `ConfirmDialog` |
-| 24h 内到期面板 | ✅ | `UpcomingStrip`（纯读展示） | 归属主插件（D-5）；投递归提醒插件 |
+| 24h 内到期面板 | ✅ | `UpcomingStrip`（纯读展示） | 归属主插件（D-5）；投递归提醒子系统 |
 | 事件/任务编辑弹窗、批量添加弹窗 | ✅ | `EventEditor` / `TaskEditor` / 批量并入一次调用 | 自实现 Modal：焦点圈、Escape、遮罩照宿主 |
 | 设置面板 | 🔁 | `settings.section` + Config | 内容收窄为：学号、学期起点、同步动作、导入导出（§5.3）；密码字段**无**（当次输入） |
 | 主题色 / 深色模式自有体系 | ❌ R1 | 宿主 token 接管 | 删 `--primary-color` 变量体系与明暗切换逻辑 |
@@ -240,7 +235,7 @@ buaaerSchedule:
   upsertCoursesFromSync(rules[])                     // 仅供同步 job 调用
   // 元
   getMeta()/setMeta(patch)                            // global: buaaId/termStart/termCode
-  subscribe(listener) → dispose                       // 供提醒插件；数据变化通知
+  subscribe(listener) → dispose                       // 供提醒子系统与未来桥；数据变化通知
 ```
 
 写入方法内部统一走：schema 校验 → 重叠检测（返回 `{conflicts: [...]}` 可行动原因）→ put。**写序即事务边界**，多写操作放一个方法内（04 §4 要点 5）。
@@ -306,7 +301,7 @@ client.js
 | **D-2** | 新会话**预填 composer** 机制（剪贴板导入与"LLM 改日程"统一入口） | 读宿主 `@deepseek-ai/dsh-client-ui-schedule` 源码（`Config.listConfigs` 拿 packageDir）复刻其"新建（composer 已预填）"路径；M5 前完成验证 |
 | **D-3** | 主插件暴露服务的形态 | 默认：`apply` 函数形态 + `ctx.provide('buaaerSchedule', api)`（02 §1 文档化路径）；备选 Service 类 + `static inject`（须先在 0.2.0-rc.2 验证 static inject 生效，01 §4 反面教材） |
 | **D-4** | 旧 SQLite 数据迁移 | 默认**做**（§4.2）；不做则接受空库重同步（课程可同步回来，手动任务/条目会丢） |
-| **D-5** | "24h 内到期"视图归属 | 默认留主插件（纯读）；提醒插件不依赖它。桥/桌宠若要复用，届时上移为服务方法 |
+| **D-5** | "24h 内到期"视图归属 | 默认留主插件（纯读）；提醒子系统不依赖它。桥/桌宠若要复用，届时上移为服务方法 |
 | **D-6** | 写入冲突校验范围 | 默认：全部写方法内置轻量重叠检测；若嫌过度可降级为仅 `batch_create` 与工具路径启用。自动排期类"建议"能力不做（R5） |
 
 ### 7.1 结论回填（2026-10-17，实现轮；依据为对 `D:\deepseek-harness` 0.2.0-rc.2 源码的核对）
@@ -315,17 +310,17 @@ client.js
 |---|---|
 | **D-1** | **第四条路（优于原 a/b/c）**：`ctx.connection.fetch.register()` 在共享 `/api` Fetch 注册表上挂精确路由（`/api/buaaer-schedule`，GET+POST）。核实依据：`client/connection` 的 `ConnectionFetchRoute` 文档明言 *"Handle one request after the physical carrier has applied its trust and authentication policy"*——即浏览器信任围栏 + 签名 cookie 鉴权先于插件 handler，与 Remote RPC 同级可信；裸 `ctx.webServer` 路由已核实**无鉴权**（README 原话 "carries no TLS, authentication, or origin policy"），维持不承载业务写的判断。UI 写路径 = `/api` 路由 → 同一 `buaaerSchedule` 服务方法（铁律保持） |
 | **D-2** | **composer 预填在 0.2.0-rc.2 不存在插件可用面**：`startSession(workspaceId?)` 无预填参数；draft/composer 存储属 ui-conversation 包内部（`ComposerKeyboard` 注释 "never across a plugin boundary"）；官方参照页 ui-schedule 的"新建"也只是裸 `startSession()`。**替代**：剪贴板页一键 = `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `uiWorkspace.openSession(id)`——队列文本直接成为新会话首条消息，Agent 据此调 `buaaer_entry_batch_create` 落库。比预填更少一步确认，语义等价 |
-| **D-3** | 采用默认：`export function apply(ctx)` + `ctx.effect(() => ctx.provide('buaaerSchedule', service))`；次级插件 `inject: ['buaaerSchedule']` |
+| **D-3** | 采用默认：`export function apply(ctx, config)` + `ctx.effect(() => ctx.provide('buaaerSchedule', service))`；提醒子系统直接引用 service 对象（原次级插件 `inject` 形态随 R2 修订作废，未来桥仍走 `inject: ['buaaerSchedule']`） |
 | **D-4** | 做。产物两件：`scripts/export-legacy-db.mjs`（旧库 → JSON，node:sqlite；Node 22 需 `--experimental-sqlite`）+ Host 侧 `host/import.js`（映射/去重/对账）。命令入口 `/buaaer-import <json路径>`，设置页另有图形导入。注意契约：导出的 entries 必须带 `id` 列（任务 entry_id 靠它重映射） |
-| **D-5** | 留主插件：`UpcomingStrip` 纯读展示，数据来自 `/api` snapshot；提醒插件不依赖它 |
+| **D-5** | 留主插件：`UpcomingStrip` 纯读展示，数据来自 `/api` snapshot；提醒子系统不依赖它 |
 | **D-6** | 全量内置：`createEntry/updateEntry/moveEntry/batchCreateEntries` 均跑重叠检测；默认拒绝并返回可行动原因，`allowConflicts=true`（工具参数/UI 确认框）后放行。课程出现（现算）也参与占位判断 |
 
 ### 7.2 实现附记（本轮落地形态，2026-10-17）
 
-- 产物位置：`dsh-plugin/buaaer-schedule/`（主插件，Host + Client）与 `dsh-plugin/buaaer-schedule-reminders/`（次级提醒插件，Host-only）。
+- 产物位置：`dsh-plugin/buaaer-schedule/`（主插件，Host + Client；提醒子系统在其 `host/reminders.js`）。
 - **Client 半拆分为包内分块**：模块系统支持 `require.async('./client.<name>.js')`（`CLIENT_CHUNK` 协议，`client.*.js` 命名），入口 `client.js` 依次装载 `client.core.js → weekgrid/editors/tasks/calendar/clipboard/settings/style`。core 必须先物化（后续分块同步 require 它）——真实 require 对已注册未物化的分块会按需物化，顺序仍由入口保证。
-- Host 半 ESM 多文件：`index.js`（装配）+ `host/{domain,semester,conflicts,service,tools,api,sso,sync,commands,import}.js`。
-- 提醒插件的身份约定：schedule 记录 title 前缀 `[buaaer:<taskId>]`，resync 靠它识别自有记录；投递会话由 `sessionController.create({})` 一次性创建并存入自有 domain `buaaer_reminders.global.boundSessionId`。
+- Host 半 ESM 多文件：`index.js`（装配 + Config）+ `host/{domain,semester,conflicts,service,tools,api,sso,sync,commands,import,reminders}.js`。
+- 提醒子系统的身份约定：schedule 记录 title 前缀 `[buaaer:<taskId>]`，resync 靠它识别自有记录；投递会话由 `sessionController.create({})` 一次性创建并存入自有 domain `buaaer_reminders.global.boundSessionId`；对外派生集 = `service.upcomingReminders()`。
 - 本轮**未做**（诚实边界）：在真实 DSH 宿主中的安装/激活/渲染验收（M0–M6 的运行时勾选全部未发生）；§8 勾选框保持未勾，待装进宿主后逐项验收。已完成的离线验证：22 个文件 `node --check`、semester/conflicts/sync 解析与 service/import 逻辑断言（含时区、周次、学期翻转、幂等导入）、client 分块在模拟 ModuleLoader 下的装配冒烟（槽位注册完整、main key ↔ sidebar id 一致、CSS 无颜色字面量）。
 
 ---
@@ -365,11 +360,11 @@ client.js
 - [ ] 队列管理（本地态）+ 一键"发送到新会话"（composer 预填队列文本）
 - [ ] Agent 据此经 `buaaer_entry_batch_create` 落库，结果在页面可见
 
-### M6 次级提醒插件
-- [ ] `buaaer-schedule-reminders` 独立安装；主插件禁用时安静不激活
+### M6 提醒子系统（主插件内）
 - [ ] 任务/考试截止按 Config 提前量登记 `at` 提醒；删除/完成任务自动撤销
-- [ ] 到点投递回原 Session；Host 重启后提醒仍在；未启用「自动化任务」时判空降级
-- [ ] 对外接口边界（未来桥的挂点）在代码中留有清晰注释，无实现
+- [ ] 到点投递回绑定 Session；Host 重启后提醒仍在
+- [ ] 未启用「自动化任务」/缺 `sessionController`/`remindersEnabled=false` 时判空降级；提醒子系统任何故障不影响日历主功能
+- [ ] `service.upcomingReminders()`（未来桥的挂点）形状稳定，代码注释边界清晰
 
 ### 收尾
 - [ ] 删除旧实现（`electron/`、`backend/`、`frontend/`、cpolar/打包脚本），更新根 README
@@ -381,7 +376,7 @@ client.js
 
 1. 样式**零颜色字面量、零自造 CSS 变量**；类别→token 只在 §4.3 那一处常量。
 2. 插件代码中**不得出现任何 LLM SDK、模型 HTTP 调用、prompt 模板**（R4/R6/R11）。
-3. 主插件**不 import/读 `ctx.schedule`**，提醒逻辑只在次级插件（R2）。
+3. 提醒逻辑只收在 `host/reminders.js` 单模块；`schedule`/`sessionController` 只经 `ctx.get` 可选读取，**绝不进 `inject`**；子系统任何故障（open 失败、resync 抛错）只降级不外溢（R2）。
 4. 学号之外的一切凭据**只作当次调用入参**，不落盘、不进 Config、不进 credentials。
 5. UI 与工具的写操作**必须**收敛到同一服务方法；两处各写一套即缺陷。
 6. 单组件 ≤300 行；超限先拆再继续。

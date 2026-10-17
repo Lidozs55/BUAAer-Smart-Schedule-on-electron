@@ -6,15 +6,14 @@
 
 ```
 dsh-plugin/
-├── buaaer-schedule/                 # 主插件 @buaaer/dsh-schedule（Host + Client）
-│   ├── index.js                     # Host：domain + 服务 + 工具 + 命令 + /api 通道
-│   ├── host/…                       # semester/conflicts/sso/sync 等模块
-│   ├── client.js                    # Client 入口（分块装载）
-│   └── client.*.js                  # 日历/任务/剪贴板/设置各分块
-└── buaaer-schedule-reminders/       # 次级提醒插件 @buaaer/dsh-schedule-reminders
+└── buaaer-schedule/                 # 主插件 @buaaer/dsh-schedule（Host + Client）
+    ├── index.js                     # Host：domain + 服务 + 工具 + 命令 + /api 通道 + Config + 提醒子系统装配
+    ├── host/…                       # semester/conflicts/sso/sync/reminders 等模块
+    ├── client.js                    # Client 入口（分块装载）
+    └── client.*.js                  # 日历/任务/剪贴板/设置各分块
 ```
 
-- 安装：`plugin_manager { action: "install_bundle", target: "<dsh-plugin/buaaer-schedule 绝对路径>" }`（次级插件同理）。
+- 安装：`plugin_manager { action: "install_bundle", target: "<dsh-plugin/buaaer-schedule 绝对路径>" }`。
 - 设计/范围/拍板与验收台账：**`docs/dsh-plugin/00-migration-checklist.md`**（唯一执行台账）；DSH 插件开发参考：同目录 `01`–`08`。
 - 旧库迁移：`node scripts/export-legacy-db.mjs` 导出 JSON → 会话内 `/buaaer-import <路径>`（或设置页图形导入）。
 - 旧实现（`electron/`、`backend/`、`frontend/` 等）在对应验收通过前**保留不动**；下方文档描述的是旧形态，仅供考古。
