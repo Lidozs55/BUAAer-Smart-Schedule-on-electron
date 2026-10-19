@@ -5,11 +5,16 @@
  * chain, then bumps a revision counter and notifies subscribers.
  */
 import { randomUUID } from 'node:crypto'
-import { ISO_DATETIME_RE, PRIORITIES, TASK_TYPES } from './domain.js'
+import { ENTRY_CATEGORIES, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, WEEK_RANGE_RE } from './domain.js'
 import { findConflicts } from './conflicts.js'
-import { deriveWeekOccurrences, termWeek, today } from './semester.js'
+import { anchorToday, addDays, dateKey, deriveWeekOccurrences, termWeek, today, zonedIso } from './semester.js'
 
 const nowIso = () => new Date().toISOString()
+
+/** `YYYY-MM-DD`, the only day-key shape that reaches window math. */
+const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+const isDayKey = value => typeof value === 'string' && DAY_KEY_RE.test(value)
 
 class ServiceError extends Error {
   constructor(code, message, details) {
@@ -34,24 +39,48 @@ const text = (value, field) => {
   return trimmed === '' ? null : trimmed
 }
 
-/** Whole-day entries span [day T00:00, day+1 T00:00) in local time. */
-function normalizeAllDay(day) {
-  assert(/^\d{4}-\d{2}-\d{2}$/.test(day), 'invalid_input', `allDay 日期格式应为 YYYY-MM-DD：${day}`)
-  const next = new Date(day + 'T12:00:00')
-  next.setDate(next.getDate() + 1)
-  const p = n => String(n).padStart(2, '0')
-  const endDay = `${next.getFullYear()}-${p(next.getMonth() + 1)}-${p(next.getDate())}`
-  const offset = offsetOf(day + 'T12:00:00')
-  return { start: `${day}T00:00:00${offset}`, end: `${endDay}T00:00:00${offset}` }
+/** Local-zoned ISO at `dayKey` + minutes-from-midnight (handles overflow). */
+const dayAt = (dayKey, minutes) => {
+  const [y, m, d] = dayKey.split('-').map(Number)
+  return zonedIso(y, m, d, Math.floor(minutes / 60), minutes % 60)
 }
 
-function offsetOf(localIso) {
-  const date = new Date(localIso)
-  const off = -date.getTimezoneOffset()
-  const sign = off >= 0 ? '+' : '-'
-  const abs = Math.abs(off)
-  const p = n => String(n).padStart(2, '0')
-  return `${sign}${p(Math.floor(abs / 60))}:${p(abs % 60)}`
+/** Whole-day entries span [day T00:00, day+1 T00:00) in local time. */
+function normalizeAllDay(day) {
+  assert(isDayKey(day), 'invalid_input', `allDay 日期格式应为 YYYY-MM-DD：${day}`)
+  return { start: dayAt(day, 0), end: dayAt(addDays(day, 1), 0) }
+}
+
+const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
+
+/**
+ * One source-supplied weekly rule. Validated here because source plugins
+ * persist rules through this service — a malformed row would otherwise only
+ * surface at the next domain open.
+ */
+function courseRule(rule) {
+  assert(rule !== null && typeof rule === 'object', 'invalid_input', '课程规则必须是对象')
+  const courseName = typeof rule.courseName === 'string' ? rule.courseName.trim() : ''
+  assert(courseName !== '', 'invalid_input', 'courseName 不能为空')
+  assert(Number.isInteger(rule.dayOfWeek) && rule.dayOfWeek >= 1 && rule.dayOfWeek <= 7,
+    'invalid_input', `dayOfWeek 须为 1-7：${rule.dayOfWeek}`)
+  assert(typeof rule.weekRange === 'string' && WEEK_RANGE_RE.test(rule.weekRange),
+    'invalid_input', `weekRange 格式不合法：${rule.weekRange}`)
+  assert(typeof rule.startTime === 'string' && HHMM_RE.test(rule.startTime),
+    'invalid_input', `startTime 须为 HH:mm：${rule.startTime}`)
+  assert(typeof rule.endTime === 'string' && HHMM_RE.test(rule.endTime),
+    'invalid_input', `endTime 须为 HH:mm：${rule.endTime}`)
+  assert(new Date(`1970-01-01T${rule.endTime}:00`) > new Date(`1970-01-01T${rule.startTime}:00`),
+    'invalid_input', 'endTime 必须晚于 startTime')
+  return {
+    courseName,
+    teacher: typeof rule.teacher === 'string' ? rule.teacher.trim() : '',
+    classroom: typeof rule.classroom === 'string' ? rule.classroom.trim() : '',
+    dayOfWeek: rule.dayOfWeek,
+    weekRange: rule.weekRange,
+    startTime: rule.startTime,
+    endTime: rule.endTime,
+  }
 }
 
 /**
@@ -61,6 +90,7 @@ export function createScheduleService(ctx, domain) {
   const entries = domain.table('entries')
   const tasks = domain.table('tasks')
   const courses = domain.table('courses')
+  const courseOverrides = domain.table('course_overrides')
   let revision = 0
   const listeners = new Set()
 
@@ -78,6 +108,8 @@ export function createScheduleService(ctx, domain) {
   const allEntries = () => [...entries.entries()].map(([, row]) => row)
   const allTasks = () => [...tasks.entries()].map(([, row]) => row)
   const allCourses = () => [...courses.entries()].map(([, row]) => row)
+  const allCourseOverrides = () =>
+    [...courseOverrides.entries()].map(([, row]) => row)
 
   const termStartOf = () => domain.global.get().termStart || null
 
@@ -87,6 +119,7 @@ export function createScheduleService(ctx, domain) {
     const conflicts = findConflicts(candidate, {
       entries: allEntries(),
       courseRows: allCourses(),
+      courseOverrides: allCourseOverrides(),
       termStart: termStartOf(),
     })
     if (conflicts.length > 0) {
@@ -101,7 +134,10 @@ export function createScheduleService(ctx, domain) {
     }
     if (!partial || input.description !== undefined) row.description = text(input.description, 'description')
     if (!partial || input.category !== undefined) {
-      assert(typeof input.category === 'string' && input.category.length > 0, 'invalid_input', 'category 不能为空')
+      // The store's zod schema enum-checks category on every start, and an
+      // invalid record fails domain activation — gate it at the write.
+      assert(ENTRY_CATEGORIES.includes(input.category), 'invalid_input',
+        `category 须为 ${ENTRY_CATEGORIES.join('|')}：${input.category}`)
       row.category = input.category
     }
     if (input.allDay) {
@@ -168,16 +204,60 @@ export function createScheduleService(ctx, domain) {
       return row
     },
 
-    async moveEntry(id, start, end, { allowConflicts = false } = {}) {
-      assert(isIso(start) && isIso(end), 'invalid_input', 'move 需要 start/end（带时区 ISO 8601）')
-      return service.updateEntry(id, { start, end }, { allowConflicts })
+    // move/delete are natively multi-item (R9-3): pass one `{id, start, end}`
+    // or one id for the single-item contract — row returned, errors thrown —
+    // or an array for the batch contract — per-item results, no throw. One
+    // code path instead of separate single/batch methods.
+    async moveEntry(moves, { allowConflicts = false } = {}) {
+      const many = Array.isArray(moves)
+      const list = many ? moves : [moves]
+      const results = []
+      let touched = false
+      let lastRow = null
+      for (const move of list) {
+        const { id } = move ?? {}
+        try {
+          assert(typeof id === 'string' && id !== '', 'invalid_input', 'move 需要 id')
+          assert(isIso(move.start) && isIso(move.end), 'invalid_input',
+            `move 需要带时区的 start/end：${move.start} .. ${move.end}`)
+          const current = await entries.get(id)
+          assert(current, 'not_found', `条目不存在：${id}`)
+          const row = { ...current, start: move.start, end: move.end, updatedAt: nowIso() }
+          await guardConflicts(row, allowConflicts)
+          await entries.put(id, row)
+          touched = true
+          lastRow = row
+          results.push({ ok: true, id, title: row.title })
+        } catch (error) {
+          if (!many) throw error
+          results.push({
+            ok: false,
+            id,
+            code: error.code ?? 'error',
+            message: error.message,
+            ...(error.details?.conflicts ? { conflicts: error.details.conflicts } : {}),
+          })
+        }
+      }
+      if (touched) changed(['entries'])
+      return many ? results : lastRow
     },
 
-    async deleteEntry(id) {
-      const existed = await entries.delete(id)
-      assert(existed, 'not_found', `条目不存在：${id}`)
-      changed(['entries'])
-      return { id, deleted: true }
+    async deleteEntry(ids) {
+      const many = Array.isArray(ids)
+      const list = many ? ids : [ids]
+      const deleted = []
+      const missing = []
+      for (const id of list) {
+        if (await entries.delete(id)) deleted.push(id)
+        else missing.push(id)
+      }
+      if (deleted.length > 0) changed(['entries'])
+      if (!many) {
+        assert(deleted.length > 0, 'not_found', `条目不存在：${list[0]}`)
+        return { id: list[0], deleted: true }
+      }
+      return { deleted, missing }
     },
 
     async batchCreateEntries(inputs, { allowConflicts = false } = {}) {
@@ -203,7 +283,7 @@ export function createScheduleService(ctx, domain) {
           if (scope === 'all') return true
           const due = new Date(row.due).getTime()
           if (scope === 'overdue') return !row.completed && due < now
-          if (scope === 'today') return dayKeyOf(row.due) === today()
+          if (scope === 'today') return dateKey(new Date(row.due)) === today()
           if (scope === 'week') return due >= now && due <= endOfWeek
           return true
         })
@@ -215,7 +295,9 @@ export function createScheduleService(ctx, domain) {
       if (!partial || input.title !== undefined) row.title = assertTitle(input.title)
       if (!partial || input.description !== undefined) row.description = text(input.description, 'description')
       if (!partial || input.taskType !== undefined) {
-        const taskType = input.taskType ?? (partial ? undefined : 'other')
+        // Legacy POST /api/tasks defaulted to homework — the dominant
+        // kind for this product's audience; keep that default.
+        const taskType = input.taskType ?? (partial ? undefined : 'homework')
         assert(TASK_TYPES.includes(taskType), 'invalid_input', `taskType 须为 ${TASK_TYPES.join('|')}`)
         if (taskType !== undefined) row.taskType = taskType
       }
@@ -237,8 +319,13 @@ export function createScheduleService(ctx, domain) {
       // or records written without one fail open()'s validation on restart.
       if (input.entryId !== undefined) row.entryId = text(input.entryId, 'entryId')
       else if (!partial && current === undefined) row.entryId = null
-      if (input.source !== undefined) row.source = input.source
-      else if (!partial && current === undefined) row.source = 'manual'
+      if (input.source !== undefined) {
+        assert(typeof input.source === 'string' && SOURCE_ID_RE.test(input.source),
+          'invalid_input', `source 须为小写来源 id：${input.source}`)
+        row.source = input.source
+      } else if (!partial && current === undefined) {
+        row.source = 'manual'
+      }
       return row
     },
 
@@ -277,95 +364,204 @@ export function createScheduleService(ctx, domain) {
         a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime))
     },
 
-    /** Project weekly rules onto one displayed week (computed, never stored). */
-    weekOccurrences(weekStart) {
-      return deriveWeekOccurrences(allCourses(), weekStart, termStartOf())
+    /** Project weekly rules onto one displayed window (computed, never stored). */
+    weekOccurrences(windowStart) {
+      return deriveWeekOccurrences(
+        allCourses(), windowStart, termStartOf(), allCourseOverrides())
+    },
+
+    listCourseOverrides() {
+      return allCourseOverrides()
     },
 
     /**
-     * Upsert sync results by rule identity — replaces the legacy
-     * "delete the whole table, then insert" destructive write.
-     * Absent rules are NOT removed: the sync observes one teaching week, so
-     * a rule outside it (e.g. weeks 1-8 while week 10 syncs) would be
+     * Save a manual exception for ONE projected occurrence. The weekly rule
+     * is untouched, so holidays / swapped classes do not leak into other
+     * weeks and a later sync keeps the edit. `canceled` hides the class but
+     * keeps a faint block the client can use to restore it.
+     */
+    async saveCourseOccurrence(input) {
+      const courseId = text(input?.courseId, 'courseId')
+      assert(courseId !== null, 'invalid_input', 'courseId 不能为空')
+      const course = courses.get(courseId)
+      assert(course !== undefined, 'not_found', `课程不存在：${courseId}`)
+      const baseDay = text(input?.baseDay, 'baseDay')
+      assert(isDayKey(baseDay), 'invalid_input', `baseDay 应为 YYYY-MM-DD：${input?.baseDay}`)
+      const courseName = text(input?.courseName, 'courseName') ?? course.courseName
+      assert(isIso(input?.start) && isIso(input?.end), 'invalid_input',
+        '课程修改需要带时区的 start/end')
+      assert(new Date(input.end) > new Date(input.start), 'invalid_input', 'end 必须晚于 start')
+      const row = {
+        id: `${courseId}@${baseDay}`,
+        courseId,
+        baseDay,
+        courseName,
+        teacher: text(input?.teacher, 'teacher') ?? '',
+        classroom: text(input?.classroom, 'classroom') ?? '',
+        start: input.start,
+        end: input.end,
+        canceled: input?.canceled === true,
+        updatedAt: nowIso(),
+      }
+      await courseOverrides.put(row.id, row)
+      changed(['course_overrides'])
+      return row
+    },
+
+    /** Drop an exception → the occurrence follows the synced rule again. */
+    async resetCourseOccurrence(courseId, baseDay) {
+      assert(isDayKey(baseDay), 'invalid_input', `baseDay 应为 YYYY-MM-DD：${baseDay}`)
+      const id = `${courseId}@${baseDay}`
+      const existed = await courseOverrides.delete(id)
+      if (existed) changed(['course_overrides'])
+      return { id, deleted: existed }
+    },
+
+    /**
+     * Upsert course rules from a source adapter (calendaring source plugin).
+     * Identity is the rule tuple, so re-syncing never clears the table.
+     * Absent rules are NOT removed: a sync observes one teaching week, so a
+     * rule outside it (e.g. weeks 1-8 while week 10 syncs) would be
      * indistinguishable from a dropped course. The one safe full clear is a
-     * term boundary, handled by the `termCode` rollover below.
-     * @param {readonly object[]} rules - parsed course rules from sync.
+     * term boundary: when this source reports a DIFFERENT term code than the
+     * one it last reported, stale rules and their per-occurrence exceptions
+     * are cleared before the upsert.
+     * @param {readonly object[]} rules - parsed course rules from a source.
      * @param {object} [options]
+     * @param {string} [options.source] - source id owning the term code.
      * @param {string} [options.termCode] - school term the rules belong to.
      */
-    async upsertCoursesFromSync(rules, { termCode } = {}) {
+    async upsertCourses(rules, { source = 'manual', termCode } = {}) {
+      assert(Array.isArray(rules), 'invalid_input', '课程规则必须是数组')
+      const state = service.getSourceState(source)
+      const priorTerm = typeof state.termCode === 'string' ? state.termCode : ''
+      const termChanged = termCode !== undefined && priorTerm !== ''
+        && termCode !== priorTerm
       let cleared = 0
-      if (termCode && termCode !== domain.global.get().termCode) {
+      let clearedOverrides = 0
+      if (termChanged) {
         for (const stale of allCourses()) {
           await courses.delete(stale.id)
           cleared += 1
         }
-        await domain.global.set({ ...domain.global.get(), termCode })
+        // Overrides belong to the old term's rules; keeping them would
+        // resurrect dead course ids into the new term's grid.
+        for (const stale of allCourseOverrides()) {
+          await courseOverrides.delete(stale.id)
+          clearedOverrides += 1
+        }
+      }
+      if (termCode !== undefined && termCode !== priorTerm) {
+        await service.setSourceState(source, { ...state, termCode })
       }
       const keyOf = rule =>
         [rule.courseName, rule.dayOfWeek, rule.startTime, rule.weekRange].join('\u0000')
       const existing = new Map(allCourses().map(row => [keyOf(row), row]))
       let created = 0
       let updated = 0
-      for (const rule of rules) {
+      for (const raw of rules) {
+        const rule = courseRule(raw)
         const key = keyOf(rule)
         const prior = existing.get(key)
         const stamp = nowIso()
         if (prior === undefined) {
           const row = { ...rule, id: randomUUID(), updatedAt: stamp }
           await courses.put(row.id, row)
+          existing.set(key, row)
           created += 1
         } else if (prior.teacher !== rule.teacher || prior.classroom !== rule.classroom
           || prior.endTime !== rule.endTime) {
-          await courses.put(prior.id, { ...prior, ...rule, id: prior.id, updatedAt: stamp })
+          const row = { ...prior, ...rule, id: prior.id, updatedAt: stamp }
+          await courses.put(prior.id, row)
+          existing.set(key, row)
           updated += 1
         }
       }
-      if (created + updated + cleared > 0) changed(['courses', 'global'])
+      if (created + updated + cleared + clearedOverrides > 0) changed(['courses', 'global'])
       return { created, updated, cleared, total: rules.length }
     },
 
-    // -- meta & subscriptions ------------------------------------------------
+    // -- meta & source state -------------------------------------------------
+    /** Generic schedule metadata. Source adapters keep their own state below. */
     getMeta() {
-      return { ...domain.global.get() }
+      const global = domain.global.get()
+      return { termStart: global.termStart }
     },
 
     async setMeta(patch) {
       const current = domain.global.get()
       const next = { ...current }
-      for (const field of ['buaaId', 'termStart', 'termCode']) {
-        if (patch[field] !== undefined) {
-          assert(typeof patch[field] === 'string', 'invalid_input', `${field} 必须是字符串`)
-          if (field === 'termStart') {
-            assert(patch[field] === '' || /^\d{4}-\d{2}-\d{2}$/.test(patch[field]),
-              'invalid_input', 'termStart 应为 YYYY-MM-DD（学期第一周周一）')
-          }
-          next[field] = patch[field].trim()
-        }
+      if (patch.termStart !== undefined) {
+        assert(typeof patch.termStart === 'string', 'invalid_input', 'termStart 必须是字符串')
+        assert(patch.termStart === '' || /^\d{4}-\d{2}-\d{2}$/.test(patch.termStart),
+          'invalid_input', 'termStart 应为 YYYY-MM-DD（学期第一周周一）')
+        next.termStart = patch.termStart.trim()
       }
       await domain.global.set(next)
       changed(['global'])
-      return { ...next }
+      return service.getMeta()
+    },
+
+    /**
+     * Opaque per-source state. A source plugin owns one key and decides its
+     * own shape; the core only guarantees durable JSON round-tripping.
+     * @param {string} source - source id, e.g. `buaa`.
+     * @returns {object} the stored object, or `{}` when never written.
+     */
+    getSourceState(source) {
+      assert(typeof source === 'string' && SOURCE_ID_RE.test(source),
+        'invalid_input', `来源 id 不合法：${source}`)
+      const raw = domain.global.get().sourceState[source]
+      if (raw === undefined) return {}
+      try {
+        const parsed = JSON.parse(raw)
+        return parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+      } catch {
+        return {}
+      }
+    },
+
+    async setSourceState(source, value) {
+      assert(typeof source === 'string' && SOURCE_ID_RE.test(source),
+        'invalid_input', `来源 id 不合法：${source}`)
+      assert(value !== null && typeof value === 'object' && !Array.isArray(value),
+        'invalid_input', '来源状态必须是对象')
+      const current = domain.global.get()
+      await domain.global.set({
+        ...current,
+        sourceState: { ...current.sourceState, [source]: JSON.stringify(value) },
+      })
+      changed(['global'])
+      return { ...value }
+    },
+
+    /**
+     * Raw v1 global fields, exposed ONLY for one-shot migration by source
+     * plugins that predate `sourceState`. New code must not use this.
+     * @deprecated
+     */
+    legacyGlobal() {
+      return { ...domain.global.get() }
     },
 
     /** Snapshot for the client panel: one fetch, everything it renders. */
     snapshot({ weekStart } = {}) {
       const meta = service.getMeta()
-      const weekMonday = weekStart || mondayToday()
+      // The client window is "anchor .. anchor+6", anchored anywhere;
+      // the entries window reaches +7d 04:00 so the last column shows
+      // its 0–4 o'clock tail (docs/10 P3/P8).
+      const anchor = isDayKey(weekStart) ? weekStart : anchorToday()
       return {
         revision,
         global: meta,
-        // Teaching-week number of the DISPLAYED week (the badge follows navigation).
-        termWeek: termWeek(meta.termStart, weekMonday),
+        // Teaching-week number of the DISPLAYED window (the badge follows navigation).
+        termWeek: termWeek(meta.termStart, anchor),
         termWeekToday: termWeek(meta.termStart, today()),
         today: today(),
         courses: service.listCourses(),
-        occurrences: service.weekOccurrences(weekMonday),
-        weekStart: weekMonday,
-        entries: service.listEntries(
-          `${weekMonday}T00:00:00${offsetOf(weekMonday + 'T12:00:00')}`,
-          addDaysIso(weekMonday, 7, offsetOf(weekMonday + 'T12:00:00')),
-        ),
+        occurrences: service.weekOccurrences(anchor),
+        weekStart: anchor,
+        entries: service.listEntries(dayAt(anchor, 0), dayAt(addDays(anchor, 7), 4 * 60)),
         tasks: service.listTasks(),
       }
     },
@@ -386,27 +582,6 @@ export function createScheduleService(ctx, domain) {
   }
 
   return service
-}
-
-function dayKeyOf(isoDatetime) {
-  const date = new Date(isoDatetime)
-  const p = n => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`
-}
-
-function mondayToday() {
-  const date = new Date()
-  const shift = (date.getDay() + 6) % 7
-  date.setDate(date.getDate() - shift)
-  const p = n => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`
-}
-
-function addDaysIso(day, days, offset) {
-  const date = new Date(day + 'T12:00:00')
-  date.setDate(date.getDate() + days)
-  const p = n => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T00:00:00${offset}`
 }
 
 export { ServiceError }

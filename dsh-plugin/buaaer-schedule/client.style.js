@@ -17,10 +17,15 @@ window.__ModuleLoader__.load({
 .bsch-spacer { flex: 1; }
 .bsch-btn { display: inline-flex; align-items: center; gap: 4px; padding: 3px 9px; border: 0.5px solid var(--dsw-alias-border-l2); border-radius: var(--dsw-radius-sm); background: var(--dsw-alias-bg-layer-1); color: var(--dsw-alias-label-primary); font-size: 12px; line-height: 20px; cursor: pointer; }
 .bsch-btn:hover { background: var(--dsw-alias-bg-layer-2); }
+.bsch-btn.is-active { background: var(--dsw-alias-bg-layer-2); }
 .bsch-btn.is-primary { background: var(--dsw-alias-brand-primary); border-color: transparent; color: var(--dsw-alias-bg-base); font-weight: 500; }
 .bsch-btn.is-danger { color: var(--dsw-alias-state-error-primary); }
 .bsch-btn:disabled { opacity: 0.5; cursor: default; }
 .bsch-badge { padding: 1px 8px; border-radius: var(--dsw-radius-xs); border: 0.5px solid var(--dsw-alias-border-l2); color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px; white-space: nowrap; }
+/* the week-range badge is the quick-jump trigger (R10-1): primary label
+   color, pressed state while the popover is open */
+.bsch-badge-btn { cursor: pointer; background: transparent; color: var(--dsw-alias-label-primary); font-family: inherit; }
+.bsch-badge-btn:hover, .bsch-badge-btn.is-active { background: var(--dsw-alias-bg-layer-2); }
 .bsch-hint { color: var(--dsw-alias-label-secondary); font-size: 12px; }
 
 .bsch-strip { display: flex; gap: 6px; padding: 0 8px 6px; overflow-x: auto; flex-wrap: nowrap; }
@@ -33,17 +38,35 @@ window.__ModuleLoader__.load({
 .bsch-grid-head { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 34px repeat(7, minmax(78px, 1fr)); background: var(--dsw-alias-bg-base); border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
 .bsch-grid-head > div { padding: 4px 2px; text-align: center; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .bsch-grid-head .is-today { color: var(--dsw-alias-brand-primary); font-weight: 500; }
-.bsch-daycell { border-left: 0.5px solid var(--dsw-alias-border-l1); }
+.bsch-daycell { position: relative; border-left: 0.5px solid var(--dsw-alias-border-l1); touch-action: pan-y; }
 .bsch-daycell.is-weekend { background: var(--dsw-alias-bg-layer-1); }
-.bsch-hour { position: relative; height: 60px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
+/* border-box keeps every row exactly 60px so hour lines stay on the
+   minute→pixel lattice the blocks are positioned with (content-box would
+   add each border to the row height and drift ~11px by 24:00). */
+.bsch-hour { position: relative; box-sizing: border-box; height: 60px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
+.bsch-hour.is-dayboundary { border-bottom: 2px solid var(--dsw-alias-label-primary); }
+.bsch-hour.is-nolabel .bsch-hourlabel { display: none; }
 .bsch-hourlabel { position: absolute; top: -9px; right: 4px; font-size: 10px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .bsch-nowline { position: absolute; left: 0; right: 0; height: 0; border-top: 1px solid var(--dsw-alias-state-error-primary); z-index: 2; pointer-events: none; }
 
-.bsch-block { position: absolute; left: 2px; right: 2px; border-radius: var(--dsw-radius-xs); border-left: 2px solid var(--bsch-block-color, var(--dsw-alias-state-idle-primary)); background: color-mix(in srgb, var(--bsch-block-color, var(--dsw-alias-state-idle-primary)) 16%, transparent); padding: 2px 4px; font-size: 11px; line-height: 1.4; overflow: hidden; cursor: pointer; touch-action: none; }
+/* border-box: the inline top/left/width/height set by WeekGrid must include
+   the block's own padding and 2px left border, otherwise every block grows
+   ~6px wider and ~4px taller than its cell slice (content-box) and drifts
+   past the day column's right and bottom lines. */
+.bsch-block { position: absolute; left: 1px; right: auto; box-sizing: border-box; border-radius: var(--dsw-radius-xs); border-left: 2px solid var(--bsch-block-color, var(--dsw-alias-state-idle-primary)); background: color-mix(in srgb, var(--bsch-block-color, var(--dsw-alias-state-idle-primary)) 16%, transparent); padding: 2px 4px; font-size: 11px; line-height: 1.4; overflow: hidden; cursor: pointer; touch-action: none; }
 .bsch-block:hover { background: color-mix(in srgb, var(--bsch-block-color, var(--dsw-alias-state-idle-primary)) 26%, transparent); }
 .bsch-block.is-course { border-left-style: dashed; }
 .bsch-block.is-done { color: var(--dsw-alias-label-secondary); text-decoration: line-through; opacity: 0.65; }
+.bsch-block.is-canceled { opacity: 0.45; text-decoration: line-through; border-left-style: dotted; }
 .bsch-block.is-dragging { opacity: 0.5; z-index: 4; }
+.bsch-block.is-selected { outline: 1.5px solid var(--dsw-alias-brand-primary); outline-offset: -1px; }
+/* Drafts span their whole column — an absolute block without a width
+   shrink-to-fits its label, which collapsed ghost/band to a sliver
+   (R11-2). EventBlock keeps its own lane width inline. */
+.bsch-block.is-ghost, .bsch-block.is-band { left: 1px; width: calc(100% - 2px); border: 0.5px dashed var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 12%, transparent); color: var(--dsw-alias-label-secondary); cursor: pointer; }
+.bsch-block.is-band { pointer-events: none; }
+.bsch-marquee { position: absolute; border: 0.5px dashed var(--dsw-alias-brand-primary); background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); pointer-events: none; z-index: 5; }
+.bsch-block-resize { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; cursor: ns-resize; }
 .bsch-block-title { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bsch-block-sub { color: var(--dsw-alias-label-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
@@ -75,6 +98,30 @@ window.__ModuleLoader__.load({
 .bsch-input:focus, .bsch-select:focus, .bsch-textarea:focus { outline: 1.5px solid var(--dsw-alias-brand-primary); outline-offset: 0; }
 .bsch-modal-actions { display: flex; justify-content: flex-end; gap: 6px; margin-top: 12px; }
 .bsch-error { color: var(--dsw-alias-state-error-primary); font-size: 12px; margin: 4px 0; white-space: pre-wrap; }
+.bsch-weekdays { display: flex; gap: 8px; flex-wrap: wrap; }
+.bsch-weekday { display: inline-flex; align-items: center; gap: 3px; font-size: 12px; cursor: pointer; }
+.bsch-rowline > .bsch-field { flex: 1; min-width: 0; }
+
+/* quick-jump mini calendar popover (legacy 快速跳转小日历) */
+.bsch-popanchor { position: relative; }
+.bsch-pop-mask { position: fixed; inset: 0; z-index: 9; }
+/* bg-overlay is translucent in the host theme — paint an opaque base under
+   the card so the grid/header behind does not show through (R10-2). */
+.bsch-popover { position: absolute; top: calc(100% + 4px); left: 0; z-index: 10; background: var(--dsw-alias-bg-base); border-radius: var(--dsw-radius-md); }
+.bsch-mc { width: 231px; padding: 8px; border-radius: var(--dsw-radius-md); border: 0.5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-overlay); box-shadow: var(--dsw-elevation-panel); }
+.bsch-mc-head { display: flex; align-items: center; justify-content: space-between; gap: 4px; margin-bottom: 4px; }
+.bsch-mc-month { font-size: 12px; line-height: 20px; font-weight: 500; }
+.bsch-mc-weekdays, .bsch-mc-grid { display: grid; grid-template-columns: repeat(7, 1fr); }
+.bsch-mc-weekdays { margin-bottom: 2px; }
+.bsch-mc-weekdays > span { text-align: center; font-size: 11px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
+.bsch-mc-day { position: relative; box-sizing: border-box; display: flex; align-items: center; justify-content: center; height: 27px; border-radius: var(--dsw-radius-xs); font-size: 12px; cursor: pointer; }
+.bsch-mc-day:hover { background: var(--dsw-alias-bg-layer-1); }
+.bsch-mc-day.is-empty { cursor: default; }
+.bsch-mc-day.is-today { outline: 1px solid var(--dsw-alias-brand-primary); }
+.bsch-mc-dot { position: absolute; bottom: 3px; left: 50%; transform: translateX(-50%); width: 4px; height: 4px; border-radius: 50%; background: transparent; }
+.bsch-mc-day.has-dot .bsch-mc-dot { background: var(--dsw-alias-state-idle-primary); }
+.bsch-mc-day.lv2 .bsch-mc-dot { background: var(--dsw-alias-state-warn-primary); }
+.bsch-mc-day.lv3 .bsch-mc-dot { background: var(--dsw-alias-state-error-primary); }
 
 .bsch-queue { display: flex; flex-direction: column; gap: 6px; padding: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .bsch-queue-item { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: var(--dsw-radius-md); border: 0.5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); }

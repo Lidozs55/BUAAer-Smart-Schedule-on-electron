@@ -75,7 +75,7 @@ window.__ModuleLoader__.load({
 
 机制要点（`@deepseek-ai/dsh-client-modules` 的 `client/manifest.ts`）：
 
-- `factory(require)` 在**首次 import/require 时**才执行（lazy CJS），结果**记忆化**；一个 factory require 另一个已注册但未物化的模块会递归物化它，所以加载顺序不需要外部编排。
+- `factory(require)` 在**首次 import/require 时**才执行（lazy CJS），结果**记忆化**。但同步 `require` 只解析模块表 seed 词、已记忆（物化）记录和注册依赖图里的行——**包内分块（`client.*.js`）不在图里**：一个分块的 factory 同步 require 另一个尚未 `require.async` 物化的分块会直接抛 `missed the module table`（M0 实测：入口先物化 core，calendar factory 同步 require 未装载的 weekgrid 即挂）。所以**入口 `apply` 必须按依赖序先 `require.async` 每个会被同步 require 的分块**（叶分块先于引用它们的分块），加载顺序需要外部编排。
 - `factory` 必须返回 bundle 的 **exports 对象**；对 Cordis 插件来说就是那个插件值（对象形式 `{ inject, apply }`，或函数形式）。
 - `require` 的解析顺序：模块表 seed 词 → 已记忆的记录 → 图里的行（注册依赖的 factory）→ 已注册的 factory → 否则**大声抛错**（`client-modules: require("…") missed the module table …`）。
 - **`factory` 里不要做副作用**（不要发请求、不要在 factory 里往 `document.head` 塞东西）。样式、定时器、监听器都在 `apply` 里用 `ctx.effect` / `ctx.on` 注册并返回清理。
@@ -263,11 +263,10 @@ Host 侧 `ctx.commands.register({ name, description, input, handler })`（见 `0
 
 ⚠️ 这条链路依赖 DSH 仓库里的生成链。**本仓库手写的 plain-JS bundle 没有这条链**，第一版不要规划自造 Remote 端点；若确实需要，先决定是否把 bundle 改成带构建的包（并用 `Config.listConfigs` 拿到的 dsh `packageDir` 对齐版本），或改用下面这条。
 
-### 5.4 备选：自己开 HTTP 路由
+### 5.4 自己开 HTTP 路由：`webServer` 与 `connection.fetch` 是两条不同的路
 
-`ctx.webServer.register({ kind: 'prefix', path: '/…' })` 可以注册路由（见 `02` §2.9），Client 半直接 `fetch`。**但鉴权必须自己确认**：插件路由是否落在已鉴权的共享前缀下、是否经过连接信任瀑布，取决于部署组合。**没核实之前不要把业务写操作放在这条路上。**
-
-在给"根作用域日历页"设计写路径时，先想清楚这一点（它决定整个架构）：先做**只读 + Agent 工具写入**，或先用 §5.1 里已有的命名空间；把自造写通道留到确认之后。
+- `ctx.webServer.register({ kind: 'prefix', path: '/…' })`（见 `02` §2.9）：**无鉴权**（README 原话 "carries no TLS, authentication, or origin policy"），不要承载业务写。
+- **本插件采用的写路径**：`ctx.connection.fetch.register()` 在共享 `/api` 前缀的 Fetch 注册表上挂精确路由（`/api/buaaer-schedule`）。浏览器信任围栏 + 签名 cookie 鉴权**先于**插件 handler（`ConnectionFetchRoute` 文档："Handle one request after the physical carrier has applied its trust and authentication policy"），与 Remote RPC 同级可信。host 侧实现见 `host/api.js`；这就是 root-scope 页面（`main` 非 conversation key）的完整读写通道，手写 bundle 不需要 §5.3 的生成链。
 
 ---
 
@@ -307,21 +306,9 @@ ctx.slots.register({ name: 'main', key: 'buaaer-calendar', locale: 'buaaerCalend
 
 ---
 
-## 8. 与现有 Vue 实现的对应关系
+## 8. 与旧 Vue 实现的对应关系
 
-| 现有（Vue） | Client 半怎么做 |
-|---|---|
-| `CalendarView.vue`（FullCalendar 周视图，2090 行） | 用 React 重画网格（FullCalendar 有 React 适配）；**不要**改宿主 DOM（现在会 `document.querySelector('.fc-toolbar-title')`），标题自己渲染 |
-| 拖拽改期 / 撤销重做 | 组件状态 + 调用 Host 写方法；撤销栈放组件里 |
-| `TaskSidebar.vue`（任务列表 + 进度环 + 24h 面板） | 同一页面里的面板；进度环用 SVG 自己画（不许引组件库） |
-| `EventEditModal.vue` / `BatchAddModal.vue` | 自己实现对话框（照抄宿主 Modal 的可访问性：焦点、Escape、遮罩）；批量添加改成**一次** Host 批量调用 |
-| `SettingsPanel.vue` | 落到 `settings.section`；主题色/深色交给宿主 token，不要再维护 `--primary-color` 体系 |
-| `SmartInput.vue`（文本/语音/图片/剪贴板） | 文本进自己的表单；剪贴板用浏览器 Clipboard API；语音优先用宿主语音能力；图片 OCR 见 `07` §4.1 |
-| `src/services/api.js`（axios + 9 个命名空间） | **删除**，换成 §5 的调用 |
-| `src/services/notification.js`（60s 轮询 + Web Notification） | **删除**，换成 `ctx.schedule`（`05`） |
-| `src/store/index.js`（Pinia 6 个 store） | 组件状态 + 从 Host 读值；跨会话数据不要留在浏览器内存 |
-| `MobileHome.vue` + `components/mobile/*` | **删除**（手机端 SPA 不迁移，见 `07` §5） |
-| `window.electronAPI.*` | **没有对应物**，删掉 |
+迁移已完成；旧组件的**交互意图**（拖选新建、时间轴范围、撤销重做、任务筛选……）逐条清单与现状偏差见 `10-ui-parity-rework.md`，旧文件地图见 `00-architecture.md` §7。仍在生效的两条规则：不要改宿主 DOM（标题等由自己的组件渲染）；拖拽/撤销等交互状态放组件本地，写操作走 Host 服务方法。
 
 ---
 

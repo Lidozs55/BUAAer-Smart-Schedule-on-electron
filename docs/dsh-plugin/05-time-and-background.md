@@ -130,12 +130,16 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 
 官方发布版 Web profile **不含 Schedule**。要启用：在插件管理页的"官方"分组里启用**「自动化任务」**，它会把可选实验性 bundle `@deepseek-ai/dsh-experimental-schedule-bundle` 连同时钟上下文加入组合。另外：Schedule **不能**挂在 headless / 仅 SDK 的部署里——投递需要 Host 的 Web Session controller 与 Session 持久化后端。
 
-因此插件里取用 `ctx.schedule` 时**必须**按可选能力处理：
+因此插件里取用 `ctx.schedule` 时要显式决定形态：
 
 ```js
 const schedule = ctx.get('schedule');
-if (!schedule) return;   // 该 profile 没启用自动化任务：安静降级，不要抛
+if (!schedule) return;   // 可选形态：该 profile 没启用自动化任务，安静降级
 ```
+
+> **本插件的实际选择**（2026-10-17 权衡，见 `00-architecture.md` §4.3）：`schedule`/`sessionController`
+> 声明为**必需 inject**（确定性优先），代价是缺这些提供者的精简 profile 上整个插件不激活；
+> web/desktop 部署恒提供，当前可接受。上面的可选形态是通用写法，不是本项目现状。
 
 用户侧用法：启用后直接对模型说"每天 Asia/Shanghai 时区 23:00 提醒我查看天气"，或在「自动化任务」页面点「新建」（会开一个新会话，composer 里已写好该请求）。模型工具是 `schedule_create` / `schedule_list` / `schedule_delete` / `schedule_update`（Schedule 加载期间注册在活动根 Agent 的作用域中）。
 
@@ -179,7 +183,7 @@ type CommandResult =
 - 事件 `'commands/change'()`：命令注册/注销后发出。
 - 客户端用 `ctx.remote.commands.execute(agent, line, submittedAttachments, signal)` 执行；`ctx.remote.commands.list()` 拿目录。**这是手写插件让 UI 触发 Host 操作的最省事路径**（见 `03-client-ui.md`）。
 
-例：`/buaaer-sync`（立刻同步课表）、`/buaaer-remind 2h 交作业`。
+本插件注册的命令：`/buaaer-sync`（立刻同步课表）、`/buaaer-import <json路径>`（旧库导入）。
 
 ---
 

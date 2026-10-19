@@ -1,19 +1,152 @@
 /**
  * CalendarPanel: the `main` panel behind key `buaaer-calendar` — a
- * narrow-layout shell with two inline tabs (日程 | 任务, decision R3).
+ * narrow-layout shell with three inline tabs (日程 | 任务 | 剪贴板,
+ * decisions R3 + R8-rework). The week window anchor lives HERE (docs/10
+ * P8) so it survives tab switches: the window is "anchor day .. +6",
+ * anchored on today (before 04:00, yesterday), not on Monday.
  */
 window.__ModuleLoader__.load({
   id: '@buaaer/dsh-schedule/client.calendar.js',
   factory: (require) => {
     const core = require('@buaaer/dsh-schedule/client.core.js')
-    const { React, h, dateToZonedIso, addDays, mondayOf, zonedAt } = core
-    const { useState, useCallback } = React
+    const grid = require('@buaaer/dsh-schedule/client.gridmath.js')
+    const { React, h, addDays, zonedAt, pad2, dateKey } = core
+    const { useState, useCallback, useEffect } = React
     const { useScheduleData, useUndo, ConfirmDialog } = core
     const { WeekGrid } = require('@buaaer/dsh-schedule/client.weekgrid.js')
-    const { EventEditor } = require('@buaaer/dsh-schedule/client.editors.js')
+    const { EventEditor, BatchEditor, CourseEditor } = require('@buaaer/dsh-schedule/client.editors.js')
     const { TasksTab } = require('@buaaer/dsh-schedule/client.tasks.js')
+    const { ClipboardTab } = require('@buaaer/dsh-schedule/client.clipboard.js')
 
     const DAY_MS = 86_400_000
+    const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
+
+    // -- quick-jump mini calendar (legacy 快速跳转小日历) ----------------------
+    const MC_WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
+
+    const shiftMonth = (cursor, delta) => {
+      const date = new Date(cursor.year, cursor.month + delta, 1)
+      return { year: date.getFullYear(), month: date.getMonth() }
+    }
+
+    /**
+     * Month grid with per-day importance dots. Importance mirrors the
+     * original: exam 3, homework 2, anything else 1 — computed from the
+     * entries of parallel week snapshots covering the displayed month.
+     */
+    function MiniCalendar({ t, api, onJump }) {
+      const now = new Date()
+      const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() })
+      const [levels, setLevels] = useState({})
+
+      useEffect(() => {
+        let alive = true
+        const first = new Date(cursor.year, cursor.month, 1)
+        const last = new Date(cursor.year, cursor.month + 1, 0)
+        // Monday anchors covering [first, last] under the 04:00 display day.
+        const anchors = []
+        let anchor = new Date(first.getFullYear(), first.getMonth(), first.getDate() - ((first.getDay() + 6) % 7))
+        while (anchor <= last) {
+          anchors.push(dateKey(anchor))
+          anchor = new Date(anchor.getFullYear(), anchor.getMonth(), anchor.getDate() + 7)
+        }
+        Promise.all(anchors.map(week => api.snapshot(week).catch(() => null)))
+          .then(snapshots => {
+            if (!alive) return
+            // Importance per display day: exam 3, homework 2, else 1 —
+            // plus one step when the day carries 3+ entries (capped at 3),
+            // mirroring the original's calculateImportanceLevel.
+            const levelByDay = {}
+            const countByDay = {}
+            // Adjacent Monday windows overlap by the last night's 0–4 tail,
+            // so one row can appear in two snapshots; count it once.
+            const seen = new Set()
+            for (const snapshot of snapshots) {
+              // Projected course occurrences are real occupied days too:
+              // count them as importance 1 (and into the 3+ density bump).
+              for (const occurrence of snapshot?.occurrences ?? []) {
+                if (occurrence.canceled) continue
+                const id = occurrence.overrideId
+                  ?? `${occurrence.courseId}@${occurrence.start}`
+                if (seen.has(id)) continue
+                seen.add(id)
+                const key = grid.gridDay(occurrence.start)
+                levelByDay[key] = Math.max(levelByDay[key] ?? 0, 1)
+                countByDay[key] = (countByDay[key] ?? 0) + 1
+              }
+              for (const entry of snapshot?.entries ?? []) {
+                if (seen.has(entry.id)) continue
+                seen.add(entry.id)
+                const key = grid.gridDay(entry.start)
+                const base = entry.category === 'exam' ? 3 : entry.category === 'homework' ? 2 : 1
+                levelByDay[key] = Math.max(levelByDay[key] ?? 0, base)
+                countByDay[key] = (countByDay[key] ?? 0) + 1
+              }
+            }
+            for (const [key, count] of Object.entries(countByDay)) {
+              if (count >= 3) levelByDay[key] = Math.min(3, levelByDay[key] + 1)
+            }
+            setLevels(levelByDay)
+          })
+        return () => { alive = false }
+      }, [api, cursor])
+
+      const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate()
+      const leading = new Date(cursor.year, cursor.month, 1).getDay() // Sunday-first, like the original
+      const todayKey = dateKey(new Date())
+      const cells = [
+        ...Array.from({ length: leading }, (_, i) =>
+          h('div', { key: `e${i}`, className: 'bsch-mc-day is-empty' })),
+        ...Array.from({ length: daysInMonth }, (_, i) => {
+          const key = `${cursor.year}-${pad2(cursor.month + 1)}-${pad2(i + 1)}`
+          const level = levels[key] ?? 0
+          return h('div', {
+            key,
+            className: [
+              'bsch-mc-day',
+              key === todayKey ? 'is-today' : '',
+              level > 0 ? `has-dot lv${level}` : '',
+            ].filter(Boolean).join(' '),
+            onClick: () => onJump(key),
+          }, String(i + 1), h('span', { className: 'bsch-mc-dot' }))
+        }),
+      ]
+      return h('div', { className: 'bsch-mc' },
+        h('div', { className: 'bsch-mc-head' },
+          h('button', {
+            className: 'bsch-btn', title: t('toolbar.prev'),
+            onClick: () => setCursor(c => shiftMonth(c, -1)),
+          }, '‹'),
+          h('span', { className: 'bsch-mc-month' },
+            t('minical.month')
+              .replace('{year}', String(cursor.year))
+              .replace('{month}', pad2(cursor.month + 1))),
+          h('button', {
+            className: 'bsch-btn', title: t('toolbar.next'),
+            onClick: () => setCursor(c => shiftMonth(c, 1)),
+          }, '›')),
+        h('div', { className: 'bsch-mc-weekdays' },
+          MC_WEEKDAYS.map(day => h('span', { key: day }, day))),
+        h('div', { className: 'bsch-mc-grid' }, cells))
+    }
+
+    /** The week-range badge doubles as the quick-jump trigger (R10-1). */
+    function QuickJump({ t, api, weekStart, onJump }) {
+      const [open, setOpen] = useState(false)
+      const range = `${weekStart.slice(5)} ~ ${addDays(weekStart, 6).slice(5)}`
+      return h('div', { className: 'bsch-popanchor' },
+        h('button', {
+          className: `bsch-badge bsch-badge-btn${open ? ' is-active' : ''}`,
+          onClick: () => setOpen(value => !value),
+          title: t('minical.title'),
+        }, range),
+        open ? h('div', { className: 'bsch-pop-mask', onClick: () => setOpen(false) }) : null,
+        open ? h('div', { className: 'bsch-popover' },
+          h(MiniCalendar, {
+            t, api,
+            onJump: day => { setOpen(false); onJump(day) },
+          })) : null)
+    }
 
     function UpcomingStrip({ t, tasks, today }) {
       const now = Date.now()
@@ -34,12 +167,27 @@ window.__ModuleLoader__.load({
     }
 
     function ScheduleTab(props) {
-      const { t, api, timer, refresh, data, undoApi } = props
-      const [weekStart, setWeekStart] = useState(data?.weekStart ?? mondayOf(new Date().toISOString()))
+      const { t, api, timer, refresh, data, undoApi, weekStart, setWeekStart } = props
       const weekly = useScheduleData(api, timer, weekStart)
       const snapshot = weekly.data ?? data
       const [editor, setEditor] = useState(null)
-      const [conflictMove, setConflictMove] = useState(null)
+      const [courseEditor, setCourseEditor] = useState(null)
+      const [batch, setBatch] = useState(false)
+      const [conflictBatch, setConflictBatch] = useState(null)
+
+      // Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y (docs/10 P5).
+      useEffect(() => {
+        const onKey = event => {
+          if (!(event.ctrlKey || event.metaKey)) return
+          const key = event.key.toLowerCase()
+          if (key !== 'z' && key !== 'y') return
+          event.preventDefault()
+          if (key === 'y' || event.shiftKey) void undoApi.redo()
+          else void undoApi.undo()
+        }
+        window.addEventListener('keydown', onKey)
+        return () => window.removeEventListener('keydown', onKey)
+      }, [undoApi])
 
       const completedIds = (snapshot?.tasks ?? [])
         .filter(task => task.completed && task.entryId !== null)
@@ -49,42 +197,89 @@ window.__ModuleLoader__.load({
         await Promise.all([refresh(), weekly.refresh()])
       }, [refresh, weekly.refresh])
 
-      const move = async (block, newStart, newEnd, allowConflicts = false) => {
-        const before = { start: block.start, end: block.end }
-        const after = { start: dateToZonedIso(newStart), end: dateToZonedIso(newEnd) }
-        try {
-          await api.moveEntry(block.id, after.start, after.end, { allowConflicts })
+      // Move is natively multi-item (R9-3): resize passes 1 item, selection
+      // drag passes n — one code path. The host replies per item; applied
+      // items share one undo step and conflicted ones land in a single
+      // overwrite verdict dialog.
+      const applyMoves = useCallback(async items => {
+        const results = await api.moveEntry(items.map(item =>
+          ({ id: item.id, start: item.after.start, end: item.after.end })))
+        const applied = []
+        const conflicted = []
+        for (let i = 0; i < items.length; i++) {
+          const result = results[i]
+          if (result.ok) applied.push(items[i])
+          else if (result.code === 'conflict') {
+            conflicted.push({
+              item: items[i],
+              reasons: (result.conflicts ?? []).map(conflict => conflict.reason),
+            })
+          } else {
+            window.console.error(result.message)
+          }
+        }
+        if (applied.length > 0) {
           undoApi.push({
             label: 'move',
             undo: async () => {
-              await api.moveEntry(block.id, before.start, before.end, { allowConflicts: true })
+              await api.moveEntry(applied.map(item =>
+                ({ id: item.id, start: item.before.start, end: item.before.end })), { allowConflicts: true })
               await refreshBoth()
             },
             redo: async () => {
-              await api.moveEntry(block.id, after.start, after.end, { allowConflicts: true })
+              await api.moveEntry(applied.map(item =>
+                ({ id: item.id, start: item.after.start, end: item.after.end })), { allowConflicts: true })
               await refreshBoth()
             },
           })
-          await refreshBoth()
-        } catch (cause) {
-          if (cause.code === 'conflict') {
-            setConflictMove({ block, after, conflicts: cause.details?.conflicts ?? [] })
-          } else {
-            window.console.error(cause)
-          }
         }
-      }
+        await refreshBoth()
+        if (conflicted.length > 0) setConflictBatch(conflicted)
+        return {
+          appliedIds: applied.map(item => item.id),
+          failedIds: items.filter(item => !applied.includes(item)).map(item => item.id),
+        }
+      }, [api, undoApi, refreshBoth])
+
+      // Delete key on a selection: remove all in one call, recreate on undo.
+      // The full rows go into the undo closure so recreate keeps category/
+      // desc/task link (entryInput picks the known fields; ids are reassigned).
+      const deleteEntries = useCallback(async items => {
+        const rows = items.map(item => item.raw)
+        let liveIds = rows.map(row => row.id)
+        await api.deleteEntry(liveIds)
+        undoApi.push({
+          label: 'delete',
+          undo: async () => {
+            const created = await api.batchCreateEntries(rows, { allowConflicts: true })
+            liveIds = created.filter(row => row.ok).map(row => row.id)
+            await refreshBoth()
+          },
+          redo: async () => {
+            await api.deleteEntry(liveIds)
+            await refreshBoth()
+          },
+        })
+        await refreshBoth()
+      }, [api, undoApi, refreshBoth])
 
       return h('div', { className: 'bsch-body' },
         h('div', { className: 'bsch-toolbar' },
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, -7)) }, '‹'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, 7)) }, '›'),
-          h('button', { className: 'bsch-btn', onClick: () => setWeekStart(mondayOf(new Date().toISOString())) }, t('toolbar.today')),
+          h('button', { className: 'bsch-btn', onClick: () => setWeekStart(grid.anchorToday()) }, t('toolbar.today')),
+          h(QuickJump, { t, api, weekStart, onJump: day => setWeekStart(day) }),
           snapshot?.termWeek != null
             ? h('span', { className: 'bsch-badge' }, `${t('week.prefix')} ${snapshot.termWeek} ${t('week.suffix')}`.trim())
             : h('span', { className: 'bsch-badge' }, t('week.unknown')),
           h('span', { className: 'bsch-spacer' }),
-          undoApi.canUndo ? h('button', { className: 'bsch-btn', onClick: () => void undoApi.undo() }, t('toolbar.undo')) : null,
+          h('button', {
+            className: 'bsch-btn', disabled: !undoApi.canUndo, onClick: () => void undoApi.undo(),
+          }, `⤺ ${t('toolbar.undo')}`),
+          h('button', {
+            className: 'bsch-btn', disabled: !undoApi.canRedo, onClick: () => void undoApi.redo(),
+          }, `⤻ ${t('toolbar.redo')}`),
+          h('button', { className: 'bsch-btn', onClick: () => setBatch(true) }, t('toolbar.batch')),
           h('button', { className: 'bsch-btn is-primary', onClick: () => setEditor({ draft: {} }) }, `+ ${t('toolbar.newEntry')}`)),
         h(UpcomingStrip, { t, tasks: snapshot?.tasks ?? [], today: snapshot?.today }),
         weekly.error !== null
@@ -98,28 +293,63 @@ window.__ModuleLoader__.load({
                 entries: snapshot?.entries ?? [],
                 completedTaskIds: completedIds,
                 onEditEntry: block => setEditor({ initial: block.raw }),
-                onCreateAt: (day, minutes) => setEditor({
-                  draft: { start: zonedAt(day, minutes), end: zonedAt(day, minutes + 60) },
+                onEditCourse: occurrence => setCourseEditor(occurrence),
+                // startMin/endMin are grid-relative minutes (04:00 = 240).
+                onCreateAt: (day, startMin, endMin) => setEditor({
+                  draft: { start: zonedAt(day, startMin), end: zonedAt(day, endMin) },
                 }),
-                onMove: (block, newStart, newEnd) => void move(block, newStart, newEnd),
+                onJumpTo: day => setWeekStart(day),
+                onMoveItems: items => applyMoves(items),
+                onDeleteEntries: items => void deleteEntries(items),
               })),
         editor !== null ? h(EventEditor, {
           t, api,
           initial: editor.initial ?? null,
           draft: editor.draft,
+          undoApi,
+          refresh: refreshBoth,
           onClose: () => setEditor(null),
           onSaved: refreshBoth,
         }) : null,
-        conflictMove !== null ? h(ConfirmDialog, {
+        courseEditor !== null ? h(CourseEditor, {
+          t, api, undoApi,
+          occurrence: courseEditor,
+          refresh: refreshBoth,
+          onClose: () => setCourseEditor(null),
+        }) : null,
+        batch ? h(BatchEditor, {
+          t, api, undoApi,
+          refresh: refreshBoth,
+          onClose: () => setBatch(false),
+        }) : null,
+        conflictBatch !== null ? h(ConfirmDialog, {
           t, title: t('conflict.title'),
-          message: conflictMove.conflicts.map(conflict => conflict.reason).join('\n'),
+          message: conflictBatch
+            .map(({ item, reasons }) => `${item.raw?.title ?? item.id}\n${reasons.join('\n')}`)
+            .join('\n'),
           confirmLabel: t('conflict.proceed'),
-          onCancel: () => setConflictMove(null),
+          onCancel: () => setConflictBatch(null),
           onConfirm: () => {
-            const pending = conflictMove
-            setConflictMove(null)
-            void api.moveEntry(pending.block.id, pending.after.start, pending.after.end, { allowConflicts: true })
-              .then(refreshBoth)
+            const pending = conflictBatch
+            setConflictBatch(null)
+            void (async () => {
+              await api.moveEntry(pending.map(({ item }) =>
+                ({ id: item.id, start: item.after.start, end: item.after.end })), { allowConflicts: true })
+              undoApi.push({
+                label: 'move',
+                undo: async () => {
+                  await api.moveEntry(pending.map(({ item }) =>
+                    ({ id: item.id, start: item.before.start, end: item.before.end })), { allowConflicts: true })
+                  await refreshBoth()
+                },
+                redo: async () => {
+                  await api.moveEntry(pending.map(({ item }) =>
+                    ({ id: item.id, start: item.after.start, end: item.after.end })), { allowConflicts: true })
+                  await refreshBoth()
+                },
+              })
+              await refreshBoth()
+            })()
           },
         }) : null)
     }
@@ -134,6 +364,10 @@ window.__ModuleLoader__.load({
       const root = useScheduleData(env.api, env.timer)
       const undoApi = useUndo(root.refresh)
       const refreshAll = useCallback(() => { void root.refresh() }, [root.refresh])
+      // Trust a snapshot anchor only when it is a well-formed day key (P7:
+      // a poisoned 'undefined' once produced aN-NaN headers).
+      const [weekStart, setWeekStart] = useState(
+        () => DAY_KEY_RE.test(root.data?.weekStart ?? '') ? root.data.weekStart : grid.anchorToday())
 
       return h('div', { className: 'bsch-panel' },
         h('div', { className: 'bsch-tabs' },
@@ -144,19 +378,27 @@ window.__ModuleLoader__.load({
           h('button', {
             className: `bsch-tab${tab === 'tasks' ? ' is-active' : ''}`,
             onClick: () => setTab('tasks'),
-          }, t('tab.tasks'))),
-        root.error !== null && root.data === null
-          ? h('div', { className: 'bsch-list' },
-              h('span', { className: 'bsch-error' }, t('state.error').replace('{message}', root.error)))
-          : tab === 'schedule'
-            ? h(ScheduleTab, {
-                t, api: env.api, timer: env.timer, data: root.data,
-                refresh: refreshAll, undoApi,
-              })
-            : h(TasksTab, {
-                t, api: env.api, refresh: refreshAll,
-                tasks: root.data?.tasks ?? [], today: root.data?.today,
-              }))
+          }, t('tab.tasks')),
+          h('button', {
+            className: `bsch-tab${tab === 'clipboard' ? ' is-active' : ''}`,
+            onClick: () => setTab('clipboard'),
+          }, t('tab.clipboard'))),
+        root.data === null && root.error === null
+          ? h('div', { className: 'bsch-queue-empty' }, t('state.loading'))
+          : root.error !== null && root.data === null
+            ? h('div', { className: 'bsch-list' },
+                h('span', { className: 'bsch-error' }, t('state.error').replace('{message}', root.error)))
+            : tab === 'schedule'
+              ? h(ScheduleTab, {
+                  t, api: env.api, timer: env.timer, data: root.data,
+                  refresh: refreshAll, undoApi, weekStart, setWeekStart,
+                })
+              : tab === 'tasks'
+                ? h(TasksTab, {
+                    t, api: env.api, refresh: refreshAll,
+                    tasks: root.data?.tasks ?? [], today: root.data?.today,
+                  })
+                : h(ClipboardTab, { t, env }))
     }
 
     return { CalendarPanel }

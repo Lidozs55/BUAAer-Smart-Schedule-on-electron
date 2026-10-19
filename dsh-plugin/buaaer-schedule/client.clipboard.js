@@ -1,7 +1,14 @@
 /**
- * ClipboardPanel: the `main` panel behind key `buaaer-clipboard` (R8).
- * The queue is component-local state (module singleton, so it survives
- * tab switches but not a page reload — by design, it is scratch space).
+ * ClipboardTab: the clipboard queue as the third tab of the schedule
+ * panel (R8, reworked 2026-10-19: no longer a standalone sidebar panel).
+ *
+ * The queue mirrors the original design: a panel-level monitor polls
+ * `navigator.clipboard.readText()` every few seconds, captures every new
+ * non-empty text once, and prepends it to the queue. There is no "add
+ * item" button — manual entry belongs in a session, not here.
+ *
+ * The queue is component-local module state (singleton, so it survives tab
+ * switches but not a page reload — by design, it is scratch space).
  * "Send to new session" creates a session, admits the queue text as its
  * first prompt, and opens it (decision D-2: composer prefill is not
  * exposed to plugins in 0.2.0-rc.2, so the text rides the prompt itself).
@@ -11,9 +18,69 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const core = require('@buaaer/dsh-schedule/client.core.js')
     const { React, h } = core
-    const { useState } = React
+    const { useState, useEffect } = React
+    const { ConfirmDialog } = core
+
+    const MAX_QUEUE = 10
+    const POLL_MS = 5000
 
     let queue = [] // module singleton across mounts
+    let lastSeen = '' // last text captured, so one copy → one item
+    const listeners = new Set()
+
+    const emit = () => {
+      for (const listener of [...listeners]) listener(queue)
+    }
+    const commit = next => {
+      queue = next
+      emit()
+    }
+
+    /** Capture one clipboard read. Returns true when it entered the queue. */
+    const capture = text => {
+      const value = typeof text === 'string' ? text.trim() : ''
+      if (value === '' || value === lastSeen) return false
+      lastSeen = value
+      if (queue.includes(value)) return false
+      commit([value, ...queue].slice(0, MAX_QUEUE))
+      return true
+    }
+
+    const subscribe = listener => {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    }
+
+    /**
+     * Poll the system clipboard while the plugin is loaded (not just while
+     * this tab is visible). The entry starts this globally via `ctx.effect`,
+     * so copying from another panel/session still fills the queue. Browsers
+     * may reject `readText` for permission/focus reasons; a failed read is
+     * ignored and retried on the next tick, like the legacy app's monitor.
+     */
+    const startClipboardMonitor = (intervalMs = POLL_MS) => {
+      let stopped = false
+      let reading = false
+      const tick = async () => {
+        if (stopped || reading) return
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return
+        reading = true
+        try {
+          const text = await navigator.clipboard.readText()
+          if (!stopped) capture(text)
+        } catch {
+          // no permission / not focused / unsupported — retry next tick
+        } finally {
+          reading = false
+        }
+      }
+      void tick()
+      const id = setInterval(tick, intervalMs)
+      return () => {
+        stopped = true
+        clearInterval(id)
+      }
+    }
 
     const assemble = items => [
       '请把下面每一条解析为日程项并落库：',
@@ -24,18 +91,31 @@ window.__ModuleLoader__.load({
     ].join('\n')
 
     /**
-     * @param {object} props - slot props plus `env` = `{ api }` and
-     *   `session` = `{ create, prompt }` injected by the entry.
+     * @param {object} props - slot props plus `env` whose `session` =
+     *   `{ create, prompt }` and `openSession` are injected by the entry.
      */
-    function ClipboardPanel(props) {
-      const { t, env, session } = props
+    function ClipboardTab(props) {
+      const { t, env } = props
+      const { session, openSession } = env
       const [items, setItems] = useState(queue)
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
+      const [confirming, setConfirming] = useState(false)
 
-      const commit = next => {
-        queue = next
-        setItems(next)
+      useEffect(() => {
+        const off = subscribe(setItems)
+        setItems(queue) // capture can happen while this tab is unmounted
+        return () => { off() }
+      }, [])
+
+      if (confirming) {
+        return h(ConfirmDialog, {
+          t, title: t('clipboard.clear'),
+          message: t('clipboard.clearHint').replace('{count}', String(items.length)),
+          confirmLabel: t('clipboard.clear'),
+          onCancel: () => setConfirming(false),
+          onConfirm: () => { setConfirming(false); commit([]) },
+        })
       }
 
       const update = (index, value) => {
@@ -51,13 +131,6 @@ window.__ModuleLoader__.load({
         const [row] = next.splice(index, 1)
         next.splice(target, 0, row)
         commit(next)
-      }
-
-      const onPaste = event => {
-        const text = event.clipboardData.getData('text')
-        if (text === '' || items.length > 0) return
-        event.preventDefault()
-        commit(text.split(/\r?\n/).map(line => line.trim()).filter(line => line !== ''))
       }
 
       const send = async () => {
@@ -83,12 +156,18 @@ window.__ModuleLoader__.load({
         }
       }
 
-      return h('div', { className: 'bsch-panel', onPaste: onPaste },
+      return h('div', { className: 'bsch-body' },
         h('div', { className: 'bsch-toolbar' },
           h('span', { className: 'bsch-hint' }, t('clipboard.title')),
           h('span', { className: 'bsch-spacer' }),
-          h('button', { className: 'bsch-btn', onClick: () => commit([...items, '']) }, t('clipboard.add'))),
+          items.length > 0
+            ? h('button', {
+                className: 'bsch-btn is-danger', onClick: () => setConfirming(true),
+              }, t('clipboard.clear'))
+            : null),
         h('div', { className: 'bsch-hint', style: { padding: '0 8px 6px' } }, t('clipboard.hint')),
+        h('div', { className: 'bsch-hint', style: { padding: '0 8px 6px' } },
+          t('clipboard.watching')),
         items.length === 0
           ? h('div', { className: 'bsch-queue-empty' }, t('clipboard.empty'))
           : h('div', { className: 'bsch-queue' },
@@ -115,6 +194,6 @@ window.__ModuleLoader__.load({
           }, t('clipboard.send'))))
     }
 
-    return { ClipboardPanel }
+    return { ClipboardTab, startClipboardMonitor }
   },
 })

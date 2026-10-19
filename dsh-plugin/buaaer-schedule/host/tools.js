@@ -7,7 +7,6 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import { ENTRY_CATEGORIES, PRIORITIES, TASK_TYPES } from './domain.js'
-import { startSyncJob } from './sync.js'
 
 const OUTPUT = { type: 'object', additionalProperties: true }
 
@@ -135,7 +134,7 @@ const TOOLS = [
       title: { type: 'string', required: true, description: '条目标题' },
       start: { ...isoParam('开始时间，带时区 ISO 8601'), required: true },
       end: { ...isoParam('结束时间，带时区 ISO 8601'), required: true },
-      category: enumParam(ENTRY_CATEGORIES, '类别（决定显示配色），默认 other'),
+      category: enumParam(ENTRY_CATEGORIES, '类别（决定显示配色）：上课/课程类传 course，考试传 exam，作业传 homework，会议/自习/运动按语义选，默认 other'),
       description: { type: 'string', description: '备注，可省略' },
       all_day: { type: 'boolean', description: '全天条目；此时 start 传当天日期即可' },
       allow_conflicts: { type: 'boolean', description: '允许与既有日程重叠，默认 false' },
@@ -174,7 +173,7 @@ const TOOLS = [
     parameters: {
       entries: {
         type: 'array', required: true,
-        description: '条目数组，每项含 title/start/end，可选 category/description/all_day',
+        description: '条目数组，每项含 title/start/end，可选 category/description/all_day；课程类条目务必传 category:"course"，否则显示为灰色"其他"',
         items: { type: 'object', additionalProperties: true },
       },
       allow_conflicts: { type: 'boolean', description: '允许与既有日程重叠，默认 false' },
@@ -186,10 +185,11 @@ const TOOLS = [
 ]
 
 /**
- * Register the full tool set on the caller's context.
+ * Register the generic tool set on the caller's context. Source adapters
+ * register their own sync/import tools separately.
  * @returns {() => void} disposer removing every registration.
  */
-export function registerScheduleTools(ctx, service, deps) {
+export function registerScheduleTools(ctx, service) {
   const disposers = []
 
   for (const spec of TOOLS) {
@@ -217,31 +217,6 @@ export function registerScheduleTools(ctx, service, deps) {
       },
     })))
   }
-
-  disposers.push(ctx.tools.register(defineTool({
-    name: 'buaaer_course_sync',
-    description: '同步北航教务课表与考试安排（后台作业：从今天起逐日抓 7 天，按周期规则 upsert，不清空旧课）。密码仅当次使用、绝不保存。',
-    parameters: {
-      password: { type: 'string', required: true, description: '北航统一认证密码（仅当次使用，不落盘）' },
-      buaa_id: { type: 'string', description: '学号；省略则用设置里保存的学号' },
-    },
-    output: {
-      schema: OUTPUT,
-      render: (args, value) => [{
-        type: 'text',
-        text: value.jobId !== undefined
-          ? `同步作业已启动（${value.jobId}），进度见作业面板；完成后课程与考试任务会出现在日程里`
-          : `同步完成：${value.summary.daysFetched}/7 天，课程规则 ${value.summary.courses.total} 条（新增 ${value.summary.courses.created}），考试 ${value.summary.exams.total} 条`,
-      }],
-    },
-    timeoutMs: 180_000,
-    async execute(args, exec) {
-      if (exec.signal.aborted) throw new Error('cancelled')
-      const run = startSyncJob(deps, { buaaId: args.buaa_id, password: args.password })
-      if (!run.inline) return { jobId: run.jobId }
-      return { summary: await run.done }
-    },
-  })))
 
   return () => disposers.forEach(dispose => dispose())
 }

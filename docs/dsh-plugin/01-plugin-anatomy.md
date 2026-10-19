@@ -13,7 +13,7 @@
 | **bundle** | 一个 npm 包，用 `package.json` 声明 `dsh.bundle.patch`，用 YAML patch 把若干 plugin row 插进 Loader 组合 | 包目录 |
 | **profile** | 用户当前的插件组合（一组有序的 patch 层叠加在 bundle 的 row 列表上） | `$DSH_PROFILE_DIR` |
 
-一个 bundle 可以只含一个 plugin row，也可以插入多行。**本项目的迁移目标就是产出一个 bundle**。
+一个 bundle 可以只含一个 plugin row，也可以插入多行。**本插件（`@buaaer/dsh-schedule`）就是一个单 row bundle**。
 
 ---
 
@@ -217,24 +217,12 @@ cordis_inspect_query { platform: "host", provider: "Config",
 
 ---
 
-## 9. 本仓库里怎么放
+## 9. 本仓库的落位
 
-建议目录（后续工作者可依此落地）：
+实际产物在 `dsh-plugin/buaaer-schedule/`（Host 入口 + `host/` 模块 + Client 入口 + `client.*.js` 分块），完整代码地图见 `00-architecture.md` §1。本仓库的约定：
 
-```
-BUAAer-Smart-Schedule/
-├── docs/dsh-plugin/            # 本文档集
-├── dsh-plugin/
-│   └── buaaer-schedule/        # 迁移产出的 bundle 包
-│       ├── package.json
-│       ├── cordis.patch.yml
-│       ├── index.js            # Host 半：服务、工具、定时、存储
-│       ├── client.js           # Client 半：日历/四象限/设置页面
-│       └── locale/zh.json      # 显示文案（Plugin Manager 卡片、UI 文案）
-└── electron/ backend/ frontend/  # 迁移期间保留的旧实现，逐步废弃
-```
-
-bundle 目录名与包名一旦安装就与 profile 绑定，改名等于重新安装。
+- 文档放 `docs/dsh-plugin/`；旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照，验收通过后删除。
+- bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@buaaer/dsh-schedule` / `buaaer-schedule` 已定死。
 
 ---
 

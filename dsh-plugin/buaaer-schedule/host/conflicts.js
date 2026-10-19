@@ -8,7 +8,7 @@
  * Course occurrences count as occupied time so a write can surface "this
  * collides with a class" as an actionable reason.
  */
-import { deriveWeekOccurrences, mondayOf } from './semester.js'
+import { dateKey, deriveWeekOccurrences, mondayOf } from './semester.js'
 
 const instant = value => {
   const time = new Date(value).getTime()
@@ -19,13 +19,7 @@ const instant = value => {
 const overlaps = (aStart, aEnd, bStart, bEnd) => aStart < bEnd && bStart < aEnd
 
 /** Monday of the local week an ISO datetime falls in, `YYYY-MM-DD`. */
-function mondayOfWeekOf(isoDatetime) {
-  const date = new Date(isoDatetime)
-  const shift = (date.getDay() + 6) % 7
-  date.setDate(date.getDate() - shift)
-  const p = n => String(n).padStart(2, '0')
-  return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}`
-}
+const mondayOfWeekOf = isoDatetime => mondayOf(dateKey(new Date(isoDatetime)))
 
 /**
  * Find conflicts for one candidate against existing entries and the course
@@ -33,10 +27,10 @@ function mondayOfWeekOf(isoDatetime) {
  *
  * @param {object} candidate - `{ start, end, id? }`; `id` excludes the row
  *   itself when editing in place.
- * @param {object} context - `{ entries, courseRows, termStart }`.
+ * @param {object} context - `{ entries, courseRows, courseOverrides, termStart }`.
  * @returns {object[]} conflicts with actionable, human-readable reasons.
  */
-export function findConflicts(candidate, { entries, courseRows, termStart }) {
+export function findConflicts(candidate, { entries, courseRows, courseOverrides = [], termStart }) {
   const conflicts = []
   const candStart = instant(candidate.start)
   const candEnd = instant(candidate.end)
@@ -54,8 +48,11 @@ export function findConflicts(candidate, { entries, courseRows, termStart }) {
   }
 
   if (!termStart) return conflicts
-  const occurrences = deriveWeekOccurrences(courseRows, mondayOfWeekOf(candidate.start), termStart)
+  const occurrences = deriveWeekOccurrences(
+    courseRows, mondayOfWeekOf(candidate.start), termStart, courseOverrides)
   for (const occurrence of occurrences) {
+    // A canceled class (holiday) is not occupied time.
+    if (occurrence.canceled) continue
     if (overlaps(candStart, candEnd, instant(occurrence.start), instant(occurrence.end))) {
       const classroom = occurrence.classroom ? `，${occurrence.classroom}` : ''
       conflicts.push({

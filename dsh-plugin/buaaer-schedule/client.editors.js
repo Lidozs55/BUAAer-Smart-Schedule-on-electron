@@ -1,29 +1,37 @@
 /**
  * Entry editor dialog: the manual (no-LLM) creation path. Conflict
  * rejections come back with reasons; the user can retry allowing overlap.
+ * Create/update/delete each push an undo entry (docs/10 P5) — undoing a
+ * delete recreates the row (a new id; ids are not stable across cycles).
+ * BatchEditor ports the legacy 批量新建日程 (BatchAddModal): one entry per
+ * matching day inside a date range, daily or on chosen weekdays.
+ * CourseEditor writes a per-occurrence exception (`course_overrides`) so a
+ * holiday / swapped class never mutates the synced weekly rule.
  */
 window.__ModuleLoader__.load({
   id: '@buaaer/dsh-schedule/client.editors.js',
   factory: (require) => {
     const core = require('@buaaer/dsh-schedule/client.core.js')
-    const { React, h, field } = core
-    const { useState, useEffect } = React
-    const { Modal } = core
+    const gridm = require('@buaaer/dsh-schedule/client.gridmath.js')
+    const { React, h, field, pad2, dateKey } = core
+    const { useState, useMemo } = React
+    const { Modal, ConfirmDialog } = core
 
     const CATEGORIES = ['course', 'homework', 'exam', 'meeting', 'study', 'sports', 'other']
 
+    /** `YYYY-MM-DDTHH:mm` for `datetime-local` inputs, browser-local wall time. */
     const toLocalInput = iso => {
       const date = new Date(iso)
-      const p = n => String(n).padStart(2, '0')
-      return `${date.getFullYear()}-${p(date.getMonth() + 1)}-${p(date.getDate())}T${p(date.getHours())}:${p(date.getMinutes())}`
+      return `${dateKey(date)}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`
     }
 
     /**
-     * @param {object} props - `{ t, initial, api, onClose, onSaved }`;
-     * `initial` null means create (with `draft` start/end), else edit.
+     * @param {object} props - `{ t, initial, api, undoApi?, refresh?, draft,
+     *   onClose, onSaved }`; `initial` null means create (with `draft`
+     * start/end), else edit. `undoApi`/`refresh` arm the undo stack.
      */
     function EventEditor(props) {
-      const { t, initial, api, onClose, onSaved } = props
+      const { t, initial, api, undoApi, refresh, onClose, onSaved } = props
       const draft = props.draft ?? {}
       const [title, setTitle] = useState(initial?.title ?? '')
       const [category, setCategory] = useState(initial?.category ?? 'other')
@@ -32,30 +40,101 @@ window.__ModuleLoader__.load({
       const [description, setDescription] = useState(initial?.description ?? '')
       const [error, setError] = useState(null)
       const [conflicts, setConflicts] = useState(null)
+      const [confirming, setConfirming] = useState(false)
       const [busy, setBusy] = useState(false)
+
+      const settle = payload => { onSaved(payload) ; onClose() }
 
       const save = async allowConflicts => {
         setBusy(true)
         setError(null)
+        const input = {
+          title,
+          category,
+          description,
+          start: zoneLocal(start),
+          end: zoneLocal(end),
+        }
         try {
-          const input = {
-            title,
-            category,
-            description,
-            start: zoneLocal(start),
-            end: zoneLocal(end),
-          }
           const saved = initial === null
             ? await api.createEntry(input, { allowConflicts })
             : await api.updateEntry(initial.id, input, { allowConflicts })
-          onSaved(saved)
-          onClose()
+          if (undoApi !== undefined) {
+            if (initial === null) {
+              // Re-created rows get fresh ids, so undo/redo must track the
+              // live id instead of the id returned by the first save.
+              let liveId = saved.id
+              undoApi.push({
+                label: 'create',
+                undo: async () => { await api.deleteEntry(liveId) ; await refresh() },
+                redo: async () => {
+                  const created = await api.createEntry(input, { allowConflicts: true })
+                  liveId = created.id
+                  await refresh()
+                },
+              })
+            } else {
+              const before = {
+                title: initial.title,
+                category: initial.category,
+                description: initial.description,
+                start: initial.start,
+                end: initial.end,
+              }
+              undoApi.push({
+                label: 'update',
+                undo: async () => { await api.updateEntry(initial.id, before, { allowConflicts: true }) ; await refresh() },
+                redo: async () => { await api.updateEntry(initial.id, input, { allowConflicts: true }) ; await refresh() },
+              })
+            }
+          }
+          settle(saved)
         } catch (cause) {
           if (cause.code === 'conflict') setConflicts(cause.details?.conflicts ?? [])
           else setError(cause.message ?? String(cause))
         } finally {
           setBusy(false)
         }
+      }
+
+      const remove = async () => {
+        setError(null)
+        try {
+          await api.deleteEntry(initial.id)
+          if (undoApi !== undefined) {
+            // The re-created row has a new id; redo must delete THAT row.
+            let liveId = initial.id
+            undoApi.push({
+              label: 'delete',
+              undo: async () => {
+                const created = await api.createEntry({
+                  title: initial.title,
+                  category: initial.category,
+                  description: initial.description,
+                  start: initial.start,
+                  end: initial.end,
+                  ...(initial.taskId !== undefined ? { taskId: initial.taskId } : {}),
+                }, { allowConflicts: true })
+                liveId = created.id
+                await refresh()
+              },
+              redo: async () => { await api.deleteEntry(liveId) ; await refresh() },
+            })
+          }
+          settle({ deleted: initial.id })
+        } catch (cause) {
+          setError(cause.message ?? String(cause))
+        }
+      }
+
+      if (confirming) {
+        return h(ConfirmDialog, {
+          t, title: t('confirm.deleteTitle'),
+          message: t('confirm.deleteEntry').replace('{title}', initial?.title ?? ''),
+          confirmLabel: t('confirm.ok'),
+          onCancel: () => setConfirming(false),
+          onConfirm: () => { setConfirming(false); void remove() },
+        })
       }
 
       return h(Modal, { title: t(initial === null ? 'entry.create' : 'entry.edit'), onClose },
@@ -91,11 +170,7 @@ window.__ModuleLoader__.load({
               h('div', { className: 'bsch-modal-actions' },
                 initial !== null ? h('button', {
                   className: 'bsch-btn is-danger',
-                  onClick: async () => {
-                    await api.deleteEntry(initial.id)
-                    onSaved({ deleted: initial.id })
-                    onClose()
-                  },
+                  onClick: () => setConfirming(true),
                 }, t('entry.delete')) : null,
                 h('button', { className: 'bsch-btn', onClick: onClose }, t('entry.cancel')),
                 h('button', {
@@ -108,6 +183,285 @@ window.__ModuleLoader__.load({
      *  with the browser's explicit offset so the wire format is honest. */
     const zoneLocal = value => core.dateToZonedIso(new Date(value))
 
-    return { EventEditor, zoneLocal, toLocalInput }
+    // -- per-occurrence course editor ------------------------------------------
+    /**
+     * Edits ONE projected course occurrence without touching the synced
+     * weekly rule (holiday make-up, swapped room/time, canceled class).
+     * The host stores the change as a `course_overrides` row keyed by
+     * `courseId@baseDay`; dragging/resizing stays disabled in the grid.
+     */
+    function CourseEditor({ t, occurrence, api, undoApi, refresh, onClose }) {
+      const [courseName, setCourseName] = useState(occurrence.courseName)
+      const [teacher, setTeacher] = useState(occurrence.teacher ?? '')
+      const [classroom, setClassroom] = useState(occurrence.classroom ?? '')
+      const [start, setStart] = useState(toLocalInput(occurrence.start))
+      const [end, setEnd] = useState(toLocalInput(occurrence.end))
+      const [error, setError] = useState(null)
+      const [busy, setBusy] = useState(false)
+      const canceled = occurrence.canceled === true
+
+      const previous = {
+        courseId: occurrence.courseId,
+        baseDay: occurrence.baseDay,
+        courseName: occurrence.courseName,
+        teacher: occurrence.teacher ?? '',
+        classroom: occurrence.classroom ?? '',
+        start: occurrence.start,
+        end: occurrence.end,
+        canceled,
+      }
+      const nextInput = (overrides = {}) => ({
+        ...previous,
+        courseName: courseName.trim() === '' ? occurrence.courseName : courseName,
+        teacher,
+        classroom,
+        start: zoneLocal(start),
+        end: zoneLocal(end),
+        canceled: false,
+        ...overrides,
+      })
+      const restorePrevious = async () => {
+        if (occurrence.overridden) await api.saveCourseOccurrence(previous)
+        else await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
+        await refresh()
+      }
+
+      const apply = async (input, label) => {
+        setBusy(true)
+        setError(null)
+        try {
+          await api.saveCourseOccurrence(input)
+          if (undoApi !== undefined) {
+            undoApi.push({
+              label,
+              undo: restorePrevious,
+              redo: async () => { await api.saveCourseOccurrence(input); await refresh() },
+            })
+          }
+          await refresh()
+          onClose()
+        } catch (cause) {
+          setError(cause.message ?? String(cause))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const restore = async () => {
+        setBusy(true)
+        setError(null)
+        try {
+          await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
+          if (undoApi !== undefined && occurrence.overridden) {
+            undoApi.push({
+              label: 'course-restore',
+              undo: async () => { await api.saveCourseOccurrence(previous); await refresh() },
+              redo: async () => {
+                await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
+                await refresh()
+              },
+            })
+          }
+          await refresh()
+          onClose()
+        } catch (cause) {
+          setError(cause.message ?? String(cause))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h(Modal, { title: t('course.edit'), onClose },
+        h('div', null,
+          h('div', { className: 'bsch-hint' }, t('course.fromSync')),
+          field(t('course.name'), h('input', {
+            className: 'bsch-input', value: courseName, autoFocus: true,
+            onChange: e => setCourseName(e.target.value),
+          })),
+          field(t('course.teacher'), h('input', {
+            className: 'bsch-input', value: teacher,
+            onChange: e => setTeacher(e.target.value),
+          })),
+          field(t('course.classroom'), h('input', {
+            className: 'bsch-input', value: classroom,
+            onChange: e => setClassroom(e.target.value),
+          })),
+          field(t('entry.start'), h('input', {
+            className: 'bsch-input', type: 'datetime-local', value: start,
+            onChange: e => setStart(e.target.value),
+          })),
+          field(t('entry.end'), h('input', {
+            className: 'bsch-input', type: 'datetime-local', value: end,
+            onChange: e => setEnd(e.target.value),
+          })),
+          canceled
+            ? h('div', { className: 'bsch-hint' }, t('course.canceledHint'))
+            : null,
+          error !== null ? h('div', { className: 'bsch-error' }, error) : null,
+          h('div', { className: 'bsch-modal-actions' },
+            canceled
+              ? h('button', {
+                  className: 'bsch-btn', disabled: busy, onClick: () => void restore(),
+                }, t('course.restore'))
+              : h('button', {
+                  className: 'bsch-btn is-danger', disabled: busy,
+                  onClick: () => void apply(nextInput({ canceled: true }), 'course-cancel'),
+                }, t('course.cancelThis')),
+            h('button', { className: 'bsch-btn', onClick: onClose }, t('entry.cancel')),
+            h('button', {
+              className: 'bsch-btn is-primary',
+              disabled: busy || courseName.trim() === '',
+              onClick: () => void apply(nextInput(), 'course-update'),
+            }, t('entry.save')))))
+    }
+
+    // -- batch create (legacy BatchAddModal 批量新建日程) -----------------------
+    const DAY_MS = 86_400_000
+    const BATCH_DEFAULT_DAYS = [1, 2, 3, 4, 5] // Mon..Fri
+
+    function BatchEditor({ t, api, undoApi, refresh, onClose }) {
+      const [title, setTitle] = useState('')
+      const [repeat, setRepeat] = useState('daily')
+      const [weekdays, setWeekdays] = useState(BATCH_DEFAULT_DAYS)
+      const [startDate, setStartDate] = useState(dateKey(new Date()))
+      const [endDate, setEndDate] = useState(dateKey(new Date(Date.now() + 7 * DAY_MS)))
+      const [startTime, setStartTime] = useState('09:00')
+      const [endTime, setEndTime] = useState('10:00')
+      const [category, setCategory] = useState('other')
+      const [description, setDescription] = useState('')
+      const [error, setError] = useState(null)
+      const [summary, setSummary] = useState(null)
+      const [busy, setBusy] = useState(false)
+
+      // The exact days the batch will land on, for the live count preview.
+      const targetDays = useMemo(() => {
+        const days = []
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(startDate) || !/^\d{4}-\d{2}-\d{2}$/.test(endDate)) return days
+        if (endDate < startDate) return days
+        let cursor = new Date(startDate + 'T12:00:00')
+        const stop = new Date(endDate + 'T12:00:00')
+        while (cursor <= stop) {
+          const key = dateKey(cursor)
+          if (repeat === 'daily' || weekdays.includes(gridm.dayOfWeek(key))) days.push(key)
+          cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1, 12)
+        }
+        return days
+      }, [startDate, endDate, repeat, weekdays])
+
+      const toggleDay = value => setWeekdays(prev => prev.includes(value)
+        ? prev.filter(day => day !== value)
+        : [...prev, value].sort((a, b) => a - b))
+
+      const submit = async () => {
+        if (targetDays.length === 0) { setError(t('batch.emptyRange')); return }
+        if (endTime <= startTime) { setError(t('batch.badRange')); return }
+        setBusy(true)
+        setError(null)
+        const inputs = targetDays.map(day => ({
+          title,
+          category,
+          description,
+          start: zoneLocal(`${day}T${startTime}`),
+          end: zoneLocal(`${day}T${endTime}`),
+        }))
+        try {
+          // The legacy batch wrote past conflicts silently; keep that
+          // behavior (a daily 09:00 slot will legitimately touch courses).
+          const results = await api.batchCreateEntries(inputs, { allowConflicts: true })
+          const okIds = results.filter(row => row.ok).map(row => row.id)
+          const ok = okIds.length
+          const fail = results.length - ok
+          if (ok > 0 && undoApi !== undefined) {
+            let liveIds = okIds
+            const accepted = inputs.filter((_, i) => results[i].ok)
+            undoApi.push({
+              label: 'batch-create',
+              undo: async () => {
+                await api.deleteEntry(liveIds)
+                await refresh()
+              },
+              redo: async () => {
+                const created = await api.batchCreateEntries(accepted, { allowConflicts: true })
+                liveIds = created.filter(row => row.ok).map(row => row.id)
+                await refresh()
+              },
+            })
+          }
+          await refresh()
+          if (fail === 0) onClose()
+          else setSummary({ ok, fail })
+        } catch (cause) {
+          setError(cause.message ?? String(cause))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h(Modal, { title: t('batch.title'), onClose },
+        h('div', null,
+          field(t('entry.title'), h('input', {
+            className: 'bsch-input', value: title, autoFocus: true,
+            placeholder: t('entry.title'),
+            onChange: e => setTitle(e.target.value),
+          })),
+          field(t('batch.repeat'), h('select', {
+            className: 'bsch-select', value: repeat,
+            onChange: e => setRepeat(e.target.value),
+          }, [
+            h('option', { key: 'daily', value: 'daily' }, t('batch.daily')),
+            h('option', { key: 'weekly', value: 'weekly' }, t('batch.weekly')),
+          ])),
+          repeat === 'weekly' ? field(t('batch.weekdays'), h('div', { className: 'bsch-weekdays' },
+            gridm.WEEKDAY_LABELS.map((label, i) => {
+              const value = i + 1
+              return h('label', { key: value, className: 'bsch-weekday' },
+                h('input', {
+                  type: 'checkbox', checked: weekdays.includes(value),
+                  onChange: () => toggleDay(value),
+                }), label)
+            }))) : null,
+          h('div', { className: 'bsch-rowline' },
+            field(t('batch.startDate'), h('input', {
+              className: 'bsch-input', type: 'date', value: startDate,
+              onChange: e => setStartDate(e.target.value),
+            })),
+            field(t('batch.endDate'), h('input', {
+              className: 'bsch-input', type: 'date', value: endDate,
+              onChange: e => setEndDate(e.target.value),
+            }))),
+          h('div', { className: 'bsch-rowline' },
+            field(t('batch.startTime'), h('input', {
+              className: 'bsch-input', type: 'time', value: startTime,
+              onChange: e => setStartTime(e.target.value),
+            })),
+            field(t('batch.endTime'), h('input', {
+              className: 'bsch-input', type: 'time', value: endTime,
+              onChange: e => setEndTime(e.target.value),
+            }))),
+          field(t('entry.category'), h('select', {
+            className: 'bsch-select', value: category,
+            onChange: e => setCategory(e.target.value),
+          }, CATEGORIES.map(cat => h('option', { key: cat, value: cat }, t('cat.' + cat))))),
+          field(t('entry.description'), h('textarea', {
+            className: 'bsch-textarea', value: description, rows: 2,
+            onChange: e => setDescription(e.target.value),
+          })),
+          h('div', { className: 'bsch-hint' },
+            `${t('batch.hint')} ${t('batch.count').replace('{count}', String(targetDays.length))}`),
+          summary !== null
+            ? h('div', { className: 'bsch-hint' },
+                t('batch.created').replace('{ok}', String(summary.ok)).replace('{fail}', String(summary.fail)))
+            : null,
+          error !== null ? h('div', { className: 'bsch-error' }, error) : null,
+          h('div', { className: 'bsch-modal-actions' },
+            h('button', { className: 'bsch-btn', onClick: onClose }, t('entry.cancel')),
+            h('button', {
+              className: 'bsch-btn is-primary',
+              disabled: busy || title.trim() === '' || targetDays.length === 0,
+              onClick: () => void submit(),
+            }, busy ? t('batch.creating') : t('batch.create')))))
+    }
+
+    return { EventEditor, BatchEditor, CourseEditor, zoneLocal, toLocalInput }
   },
 })

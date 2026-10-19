@@ -15,6 +15,7 @@ window.__ModuleLoader__.load({
     const PRIORITIES = ['high', 'medium', 'low']
     const DAY_MS = 86_400_000
 
+    /** Overall completion ring with a percent center, like the original. */
     function ProgressRing({ done, total }) {
       const radius = 15
       const circumference = 2 * Math.PI * radius
@@ -34,14 +35,20 @@ window.__ModuleLoader__.load({
         'stroke-dashoffset': String(circumference * (1 - progress)),
         transform: 'rotate(-90 20 20)',
       }),
-      h('text', { x: 20, y: 24, 'text-anchor': 'middle' }, `${done}/${total}`))
+      h('text', { x: 20, y: 24, 'text-anchor': 'middle' }, `${Math.round(progress * 100)}%`))
     }
 
     function TaskEditor({ t, initial, api, onClose, onSaved }) {
       const [title, setTitle] = useState(initial?.title ?? '')
       const [taskType, setTaskType] = useState(initial?.taskType ?? 'homework')
       const [priority, setPriority] = useState(initial?.priority ?? 'medium')
-      const [due, setDue] = useState(toLocalInput(initial?.due ?? new Date(Date.now() + DAY_MS)))
+      const [due, setDue] = useState(() => {
+        if (initial?.due !== undefined) return toLocalInput(initial.due)
+        // Legacy defaulted a new task's due to TODAY (end of day).
+        const endOfToday = new Date()
+        endOfToday.setHours(23, 59, 0, 0)
+        return toLocalInput(endOfToday)
+      })
       const [description, setDescription] = useState(initial?.description ?? '')
       const [error, setError] = useState(null)
       const [confirming, setConfirming] = useState(false)
@@ -113,9 +120,11 @@ window.__ModuleLoader__.load({
       const { t, api, refresh, tasks, today } = props
       const [editing, setEditing] = useState(null) // null | {} | task
       const [busyId, setBusyId] = useState(null)
+      const [filter, setFilter] = useState('all') // all | pending | done (P6)
 
       const groups = useMemo(() => {
         const now = Date.now()
+        const byDue = (a, b) => new Date(a.due).getTime() - new Date(b.due).getTime()
         const buckets = { overdue: [], today: [], week: [], later: [], done: [] }
         for (const task of tasks) {
           if (task.completed) { buckets.done.push(task); continue }
@@ -126,8 +135,15 @@ window.__ModuleLoader__.load({
           else if (dueMs <= now + 7 * DAY_MS) buckets.week.push(task)
           else buckets.later.push(task)
         }
+        for (const list of Object.values(buckets)) list.sort(byDue)
         return buckets
       }, [tasks, today])
+
+      const visible = filter === 'all' ? groups
+        : filter === 'done' ? { ...groups, overdue: [], today: [], week: [], later: [] }
+          : { ...groups, done: [] }
+
+      const pendingCount = groups.overdue.length + groups.today.length + groups.week.length + groups.later.length
 
       const toggle = async task => {
         setBusyId(task.id)
@@ -148,7 +164,8 @@ window.__ModuleLoader__.load({
         h('div', { className: 'bsch-row-main', onClick: () => setEditing(task) },
           h('div', { className: 'bsch-row-title' }, task.title),
           h('div', { className: 'bsch-row-meta' },
-            `${task.due.slice(5, 16).replace('T', ' ')} · ${t('type.' + task.taskType)}`)),
+            `${task.due.slice(5, 16).replace('T', ' ')} · ${t('type.' + task.taskType)}`),
+          task.description ? h('div', { className: 'bsch-row-meta' }, task.description) : null),
         h('button', { className: 'bsch-btn', onClick: () => setEditing(task) }, t('task.edit')))
 
       const section = (label, list, visible = true) => visible && list.length > 0
@@ -157,19 +174,27 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'bsch-list' },
         h('div', { className: 'bsch-progress' },
-          h(ProgressRing, {
-            done: groups.today.filter(task => task.completed).length,
-            total: groups.today.length + groups.overdue.filter(task => !task.completed).length,
-          }),
+          h(ProgressRing, { done: groups.done.length, total: tasks.length }),
           h('span', { className: 'bsch-hint' }, t('task.progress')),
+          h('span', { className: 'bsch-hint' },
+            `${t('task.all')} ${pendingCount + groups.done.length} · ${t('task.pending')} ${pendingCount} · ${t('task.done')} ${groups.done.length}`),
           h('span', { className: 'bsch-spacer' }),
+          h('select', {
+            className: 'bsch-select', style: { width: 'auto' },
+            value: filter, onChange: e => setFilter(e.target.value),
+            'aria-label': t('task.filter'),
+          },
+            h('option', { value: 'all' }, t('task.all')),
+            h('option', { value: 'pending' }, t('task.pending')),
+            h('option', { value: 'done' }, t('task.done'))),
           h('button', { className: 'bsch-btn is-primary', onClick: () => setEditing({}) },
             `+ ${t('task.create')}`)),
-        section(t('task.overdue'), groups.overdue),
-        section(t('task.today'), groups.today),
-        section(t('task.week'), groups.week),
-        section(t('task.later'), groups.later),
-        section(t('task.done'), groups.done),
+        tasks.length === 0 ? h('div', { className: 'bsch-queue-empty' }, t('task.empty')) : null,
+        section(t('task.overdue'), visible.overdue),
+        section(t('task.today'), visible.today),
+        section(t('task.week'), visible.week),
+        section(t('task.later'), visible.later),
+        section(t('task.done'), visible.done),
         editing !== null ? h(TaskEditor, {
           t, initial: editing.id === undefined ? null : editing, api,
           onClose: () => setEditing(null), onSaved: refresh,

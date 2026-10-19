@@ -1,14 +1,17 @@
 /**
- * The client panel's data channel (decision D-1): exact routes on the
+ * The schedule panel's data channel (decision D-1): exact routes on the
  * shared `/api` Fetch registry. The carrier applies the browser-trust
  * fence and cookie authentication before our handler runs, so these are
  * as trusted as the Remote RPC surface — unlike bare `ctx.webServer`
  * routes, which carry no auth and must never take business writes.
  *
+ * Source adapters own their own routes (`/api/<source>`) and call the same
+ * `buaaerSchedule` service; this file is the generic data surface only.
+ *
  * Wire shape mirrors `RemoteResult`: `{ ok: true, value } |
  * { ok: false, error: { code, message, details? } }`.
  */
-import { importLegacyPayload } from './import.js'
+import { importSchedulePayload } from './import.js'
 
 const ROUTE_PATH = '/api/buaaer-schedule'
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' }
@@ -22,37 +25,37 @@ const fail = (code, message, details) =>
   json(200, { ok: false, error: { code, message, ...(details ? { details } : {}) } })
 
 /** POST operations, each mapping to one service method. */
-function operations(service, deps) {
+function operations(service) {
   return {
     createEntry: body => service.createEntry(body.input, { allowConflicts: body.allowConflicts }),
     updateEntry: body => service.updateEntry(body.id, body.patch, { allowConflicts: body.allowConflicts }),
-    moveEntry: body => service.moveEntry(body.id, body.start, body.end, { allowConflicts: body.allowConflicts }),
-    deleteEntry: body => service.deleteEntry(body.id),
+    moveEntry: body => service.moveEntry(body.moves, { allowConflicts: body.allowConflicts }),
+    deleteEntry: body => service.deleteEntry(body.ids),
     batchCreateEntries: body =>
       service.batchCreateEntries(body.inputs, { allowConflicts: body.allowConflicts }),
+    saveCourseOccurrence: body => service.saveCourseOccurrence(body.input),
+    resetCourseOccurrence: body =>
+      service.resetCourseOccurrence(body.courseId, body.baseDay),
     createTask: body => service.createTask(body.input),
     updateTask: body => service.updateTask(body.id, body.patch),
     setTaskCompleted: body => service.setTaskCompleted(body.id, body.completed),
     deleteTask: body => service.deleteTask(body.id),
     setMeta: body => service.setMeta(body.patch),
-    startSync: async body => {
-      const run = deps.startSync({ buaaId: body.buaaId, password: body.password })
-      return run.inline ? { summary: await run.done } : { jobId: run.jobId }
-    },
     /** Full-domain dump — the importable counterpart of the settings export. */
     export: () => ({
       global: service.getMeta(),
       courses: service.listCourses(),
+      courseOverrides: service.listCourseOverrides(),
       entries: service.listEntries(),
       tasks: service.listTasks(),
     }),
-    import: body => importLegacyPayload(service, body.payload),
+    import: body => importSchedulePayload(service, body.payload),
   }
 }
 
 /**
  * Install the routes. Caller owns the returned disposer via its effect.
- * @param {object} deps - `{ service, startSync }`.
+ * @param {object} deps - `{ service }`.
  */
 export function registerClientApi(ctx, deps) {
   const connection = ctx.get('connection')
@@ -60,7 +63,7 @@ export function registerClientApi(ctx, deps) {
     ctx.logger.info('buaaer-schedule: connection seam absent — client panel data channel disabled (tools still work)')
     return () => {}
   }
-  const ops = operations(deps.service, deps)
+  const ops = operations(deps.service)
 
   return connection.fetch.register({
     path: ROUTE_PATH,
@@ -70,7 +73,11 @@ export function registerClientApi(ctx, deps) {
       try {
         const url = new URL(request.url)
         if (request.method === 'GET') {
-          return ok(deps.service.snapshot({ weekStart: url.searchParams.get('weekStart') ?? undefined }))
+          // Reject malformed weekStart (e.g. the string 'undefined') instead
+          // of letting it poison the snapshot (docs/10 P7).
+          const raw = url.searchParams.get('weekStart')
+          const weekStart = raw !== null && /^\d{4}-\d{2}-\d{2}$/.test(raw) ? raw : undefined
+          return ok(deps.service.snapshot({ weekStart }))
         }
         const body = await parseBody(request)
         if (body === undefined) {

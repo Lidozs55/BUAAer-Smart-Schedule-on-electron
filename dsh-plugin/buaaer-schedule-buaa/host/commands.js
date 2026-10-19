@@ -1,15 +1,16 @@
 /**
- * Human commands (§5.3): `/buaaer-sync` reuses a cached SSO jar — the
- * command input is recorded in the session log, so passwords must never
- * ride through here; `/buaaer-import` loads a legacy JSON dump.
+ * Human commands for the BUAA source: `/buaaer-sync` reuses a cached SSO
+ * jar — the command input is recorded in the session log, so passwords must
+ * never ride through here; `/buaaer-import` loads a legacy JSON dump.
  */
-import { importLegacyPayload } from './import.js'
+import { importLegacyPayload } from './legacy-import.js'
+import { SOURCE_ID } from './state.js'
 
 /**
  * @param {object} deps - `{ service, startSync }`; `startSync(creds)` from
  *   the sync module adapter in index.js.
  */
-export function registerScheduleCommands(ctx, deps) {
+export function registerBuaaCommands(ctx, deps) {
   const commands = ctx.get('commands')
   if (!commands) return () => {}
   const fs = ctx.get('fs')
@@ -18,11 +19,10 @@ export function registerScheduleCommands(ctx, deps) {
   disposers.push(commands.register({
     name: 'buaaer-sync',
     description: '立即同步北航课表（需要本进程内已有登录会话；带密码的同步请在设置页或会话内进行）',
-    input: { hint: '' },
     handler: async invocation => {
-      const buaaId = deps.service.getMeta().buaaId
+      const buaaId = deps.service.getSourceState(SOURCE_ID).buaaId
       if (!buaaId) {
-        return { kind: 'error', text: '尚未配置学号：请先在「日程」插件的设置里填写学号与学期起点。' }
+        return { kind: 'error', text: '尚未配置学号：请先在「北航教务导入」设置里填写学号。' }
       }
       try {
         const run = deps.startSync({ buaaId })

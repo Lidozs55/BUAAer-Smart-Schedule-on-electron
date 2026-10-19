@@ -98,7 +98,9 @@ export const scheduleSpec = defineDomain({
 规则：
 
 - `defineDomain` 是**身份助手**，在**模块加载时**就大声失败：名字不符合 `UNIT_NAME_RE`、`version` 不是非负整数、global schema 接受 `null`（`null` 是后端"从未写入"的哨兵，可空 global 会与"缺失"混淆）——这几种都会抛。表名同样要匹配 `UNIT_NAME_RE`。
+  - **`UNIT_NAME_RE` 是 `/^[a-z][a-z0-9_]*$/`，即 snake_case；表名写 camelCase 会在 import 阶段直接抛**（2026-10-20 实测：`courseOverrides` → `table name 'courseOverrides' must match …`）。后果比"报错"更隐蔽：loader 的 `_init` 捕获 import 异常后**不再创建 fiber**，于是该行既没有 host 插件、也不会进入 `clientModules` 的 `dsh.client` 扫描——**客户端条目整条消失**（`__DSH_BOOT__.entries` 里没有它，样式/面板/settings 卡全不出现），但启动不报错、宿主看起来正常。排查手段：`loader.entries()` 里该行 `fiber === undefined`，或 `clientModules.pkgMeta` 里根本没有该包名的键。表名一律用 snake_case（`course_overrides`），JS 内部变量仍可用 camelCase。
 - schema 用 **zod**（DSH 侧 `@deepseek-ai/dsh-storage-domain` 依赖 `zod@^4.4.3`）。本仓库的 bundle 需要自己声明 `zod` 依赖；版本要与 dsh 使用的大版本一致（结构兼容），落地前后用 `Config.listConfigs` 拿到的 `packageDir` 核对 dsh 实际装的版本。
+  - **声明位置是 `peerDependencies`，不是 `dependencies`**（2026-10-17 M0 验收踩坑修正）：`install_bundle` 以本地目录安装的 bundle 是 pnpm 链接包，宿主按 `routeLinked` 解析其裸导入——只有在插件自身 `package.json` 的 `peerDependencies` 里声明的包名，才会被运行时解析映射到宿主安装侧的共享实例（`readPeerNames` 只读 `peerDependencies`）。写进 `dependencies` 的宿主包（`@deepseek-ai/*`、`zod`）既不会被 pnpm 装进链接目录，也命中不了 peer 拦截，激活即 `ERR_MODULE_NOT_FOUND`。依据：DSH `docs/user/develop/basic/publish.zh.md`（"需要与宿主共享实例的 dsh 包同时声明在 `peerDependencies` 与 `devDependencies` 中"）与 `packages/boot/app-boot/src/profile-resolution/resolver.ts` 的 `routeLinked`。手写 bundle 无类型检查链，`devDependencies` 副本可省。
 - `Spec` 可选字段：`layout?: 'single' | 'per-record'`、`compatibleVersions?: readonly number[]`、`invalidRecords?: 'backup-and-skip'`。
 - 每个 domain/表的名字同时是后端里的 unit 名与表名，**改名 = 数据迁移**，一开始就要定好。
 
@@ -152,14 +154,14 @@ update(key: K, fn: (current: V) => V): Promise<V>
 |---|---|---|
 | `user`（单例：`buaa_id`） | domain 的 `global` | 本来就是单例，global 正合适。**不要**搬 `password_hash`（现在是死字段）、`buaa_cookies`（进程内会话即可） |
 | `course` | `courses` 表 | key 用稳定 id；保留 `day_of_week` / `week_range`（"第 1-16 周"）语义——这是课程表的本质，不是冗余 |
-| `task` | `tasks` 表 | `deadline` 统一带时区的 ISO 8601；**顺手修掉**：`estimated_time` 在模型里根本不存在（见 `07` §6） |
+| `task` | `tasks` 表 | `deadline` 统一带时区的 ISO 8601（旧库本地时间当 UTC 存的缺陷已修） |
 | `entries` | `entries` 表 | key 建议 `YYYY-MM-DD#<id>` 或 `id` + 一个"按日索引"记录，避免"取一周"退化成全表扫描 |
 | 提醒设置（`reminderSettings`） | 插件 `Config` | 用户可调、升级保留，正是 Config 的用途 |
 | 过期任务清理（现由 `GET /api/reminders/upcoming` 顺手删） | 明确的服务方法 | 读接口不要再有删除副作用 |
 
 设计要点：
 
-1. **时区只有一种语义**。现有代码把本地时间 `replace(tzinfo=None)` 当 UTC 存，前端又用 `toISOString()` 取 UTC 日期（见 `07` §6）。新实现统一"带偏移的 ISO 8601"，并在 schema 的字段 JSDoc/注释里写清。
+1. **时区只有一种语义**。统一"带偏移的 ISO 8601"，并在 schema 的字段 JSDoc/注释里写清。
 2. **key 设计决定读取成本**。`KvTable` 只有 `get` / `entries` / `keys` / `size`——没有查询语言。要"取某周条目"就必须让 key 前缀或索引记录支持它，别指望全表遍历在生产量级下没事。
 3. **schema 版本**：表结构变更时 bump `version`，需要兼容旧数据就把旧版本号写进 `compatibleVersions`。
 4. **不要重复存提醒**：提醒的持久状态属于 `ctx.schedule`，自己的 domain 里只存业务事实（截止时间），不要镜像一份"是否已提醒"。

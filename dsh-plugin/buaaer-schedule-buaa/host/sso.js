@@ -11,15 +11,16 @@ const API_BASE = 'https://byxt.buaa.edu.cn/jwapp/sys'
 const DETAIL_PATH = '/homeapp/api/home/teachingSchedule/detail.do'
 const EXAMS_PATH = '/homeapp/api/home/student/exams.do'
 
-/** Headers the school side expects; these are its requirements, not ours. */
+/**
+ * Headers the school side expects; these are its requirements, not ours.
+ * Deliberately NO `X-Requested-With`: the JW entry answers XHR probes
+ * with 401 but redirects plain navigations to the SSO with 302, and the
+ * login flow keys on that 302 (verified 2026-10-19; the legacy
+ * `requests.Session` never sent the header either).
+ */
 export const schoolHeaders = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-  'Referer': 'https://byxt.buaa.edu.cn/jwapp/sys/homeapp/home/index.html',
-  'X-Requested-With': 'XMLHttpRequest',
-  'sec-ch-ua': '"Chromium";v="142", "Microsoft Edge";v="142", "Not_A Brand";v="99"',
-  'sec-ch-ua-mobile': '?0',
-  'sec-ch-ua-platform': '"Windows"',
 }
 
 export class BuaaError extends Error {
@@ -139,7 +140,8 @@ export async function apiGet(jar, url, signal) {
     // One retry: the 302's Set-Cookie may have bound the server session.
     response = await request(jar, url, { signal })
   }
-  if (response.status === 302) {
+  if (response.status === 302 || response.status === 401) {
+    // 401 is the XHR-flavored "not logged in" the school also returns.
     throw new BuaaError('need_login', 'SSO 会话已过期，需要重新登录')
   }
   if (response.status !== 200) {

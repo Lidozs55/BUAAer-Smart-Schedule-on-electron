@@ -27,6 +27,28 @@
 
 环境变量（profile 启动的 Harness 里才有）：`DSH_PROFILE`（profile 名）、`DSH_PROFILE_DIR`（其目录，`node_modules` 只放 profile 安装的 bundle）。这两个值在**没有** profile 启动的 Harness 里不存在——不要据此猜路径。
 
+### 2.1 scratch web 宿主（本插件的本地验证环，2026-10-17 实测通过）
+
+不污染真实 profile 的隔离验证方式，改完插件代码后的标准回路：
+
+```bash
+# 1) 用临时 home 起 web 宿主（隔离 DSH 配置与数据）
+DSH_HOME=<空临时目录> dsh web
+
+# 2) 另开终端，同一 DSH_HOME 下把 bundle 链接安装进 web profile
+DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaaer-schedule 绝对路径>
+DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaaer-schedule-buaa 绝对路径>
+```
+
+- 先装核心再装来源适配器；来源插件 `inject: ['buaaerSchedule']`，核心缺失时会 park。
+
+- `dsh web` 监听 3080 端口，控制台会打印一条**带 token 的完整 URL**——必须打开那条 URL（裸 `http://127.0.0.1:3080` 过不了鉴权）。
+- 打开后侧边栏应出现「日程/剪贴板」入口；宿主半激活失败会打在启动日志里（fiber 状态 `failed`，`loading` 卡死 = apply 未返回）。
+- 链接安装指向源码目录：改插件源码后**重启 scratch 宿主**即生效（不需要重新 add）。
+- 用完停掉宿主、删除临时目录。不要把测试数据写进真实 profile。
+
+排查数据通道时可用两个探针区分故障层：`/connect` 有响应而 `/api/buaaer-schedule` 404 = connection 激活竞态或路由未注册（见 `00` §4.3）；两者都 404 = 宿主/鉴权层问题。
+
 ---
 
 ## 3. 包内自检（安装前必须做完）

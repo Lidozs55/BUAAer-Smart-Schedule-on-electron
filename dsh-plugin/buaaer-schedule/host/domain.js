@@ -22,14 +22,24 @@ export const WEEK_RANGE_RE = /^\d{1,2}(-\d{1,2})?(,\d{1,2}(-\d{1,2})?)*$/
 /**
  * Global singletons may not be nullable (null is the backend's "never
  * written" sentinel), so unset facts are the empty string.
+ *
+ * `sourceState` is the extension point for import-source plugins: each
+ * source owns one JSON string under its own key. The schedule core never
+ * interprets those values, so adding a source needs no schema change.
+ *
+ * `buaaId` / `termCode` are v1 fields retained ONLY so existing profiles
+ * keep opening without a data migration. The core no longer reads them;
+ * the BUAA source plugin migrates them into `sourceState.buaa` once.
  */
 const globalSchema = z.object({
-  /** BUAA student id; '' until the user sets it. */
-  buaaId: z.string(),
   /** Monday of teaching week 1, `YYYY-MM-DD`; '' until configured. */
   termStart: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/),
-  /** Term code last seen from a sync, e.g. `2026-2027-1`; '' if never. */
-  termCode: z.string(),
+  /** Per-source adapter state: source id → JSON string. */
+  sourceState: z.record(z.string(), z.string()).default({}),
+  /** @deprecated v1 compatibility field; migrated by the BUAA source plugin. */
+  buaaId: z.string().default(''),
+  /** @deprecated v1 compatibility field; migrated by the BUAA source plugin. */
+  termCode: z.string().default(''),
 })
 
 const courseSchema = z.object({
@@ -46,8 +56,37 @@ const courseSchema = z.object({
   updatedAt: isoDateTime,
 })
 
+const dayKey = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
+
+/**
+ * One manual exception to a synced weekly course rule (holiday make-up,
+ * room/time change, cancellation). Keyed by `courseId@baseDay`, where
+ * `baseDay` is the projection day the exception was created from, so the
+ * rule itself stays untouched and a later sync never overwrites the edit.
+ */
+const courseOverrideSchema = z.object({
+  id: z.string().min(1),
+  courseId: z.string().min(1),
+  baseDay: dayKey,
+  courseName: z.string().min(1),
+  teacher: z.string(),
+  classroom: z.string(),
+  start: isoDateTime,
+  end: isoDateTime,
+  canceled: z.boolean(),
+  updatedAt: isoDateTime,
+})
+
 export const TASK_TYPES = ['homework', 'exam', 'lecture', 'other']
 export const PRIORITIES = ['high', 'medium', 'low']
+
+/**
+ * Tasks may be tagged by any source plugin, so the source is an open id
+ * rather than a fixed enum: `manual`, `import`, `agent`, `buaa_sync`, or a
+ * future source's own id. The shape matches source-state ids on purpose.
+ */
+export const SOURCE_ID_RE = /^[a-z][a-z0-9_-]*$/
+/** @deprecated Built-in tags for reference only; the schema accepts any id. */
 export const TASK_SOURCES = ['manual', 'buaa_sync', 'agent', 'import']
 
 const taskSchema = z.object({
@@ -61,7 +100,7 @@ const taskSchema = z.object({
   completed: z.boolean(),
   /** Key of the linked entry in `entries`, or null. */
   entryId: z.string().nullable(),
-  source: z.enum(TASK_SOURCES),
+  source: z.string().regex(SOURCE_ID_RE),
   updatedAt: isoDateTime,
 })
 
@@ -88,11 +127,16 @@ export const scheduleDomainSpec = defineDomain({
   version: 1,
   tables: {
     courses: domainTable(courseSchema),
+    // Additive table: existing stores open unchanged (no records to migrate).
+    // Table names are storage-domain unit identifiers and must match
+    // /^[a-z][a-z0-9_]*$/ — camelCase fails `defineDomain` at import time,
+    // which would keep the whole plugin (host and client) from activating.
+    course_overrides: domainTable(courseOverrideSchema),
     tasks: domainTable(taskSchema),
     entries: domainTable(entrySchema),
   },
   global: {
     schema: globalSchema,
-    initial: { buaaId: '', termStart: '', termCode: '' },
+    initial: { termStart: '', sourceState: {}, buaaId: '', termCode: '' },
   },
 })
