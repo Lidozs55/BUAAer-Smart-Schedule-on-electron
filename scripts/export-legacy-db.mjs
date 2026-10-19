@@ -4,7 +4,7 @@
  * payload `/buaaer-import` consumes (decision D-4). Contract: `entries`
  * rows keep their `id` (task `entry_id` links resolve through it);
  * mapping and timezone fixes happen host-side in
- * `dsh-plugin/buaaer-schedule/host/import.js`.
+ * `dsh-plugin/dsh-schedule/host/import.js`.
  *
  * Usage:
  *   node scripts/export-legacy-db.mjs [path\to\app.db] [out.json]

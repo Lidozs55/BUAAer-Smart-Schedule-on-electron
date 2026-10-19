@@ -8,9 +8,9 @@
  * yesterday's column, under the 23:00 day boundary).
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.gridmath.js',
+  id: '@lidozs55/dsh-schedule/client.gridmath.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
     const { addDays, dateKey, pad2 } = core
 
     /** Display day: 04:00 → next-day 04:00 (1440 minutes). */

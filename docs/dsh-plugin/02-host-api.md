@@ -331,7 +331,7 @@ export function apply(ctx: Context, config: Config) {
 ```yaml
 - insert:
     - id: buaaer-schedule
-      name: '@buaaer/dsh-schedule'
+      name: '@lidozs55/dsh-schedule'
       config:
         greeting: 'Hi there'
         maxRetries: 5

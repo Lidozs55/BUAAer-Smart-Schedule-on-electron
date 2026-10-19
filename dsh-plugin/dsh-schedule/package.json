@@ -1,5 +1,5 @@
 {
-  "name": "@buaaer/dsh-schedule",
+  "name": "@lidozs55/dsh-schedule",
   "version": "0.2.0",
   "description": "Generic DSH schedule core: calendar entries, tasks, course rules, reminders, tools and panel.",
   "private": true,

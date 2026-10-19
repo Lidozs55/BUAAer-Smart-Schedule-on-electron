@@ -4,7 +4,7 @@
  * Neutral borders are 0.5px; radius values ride the token scale.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.style.js',
+  id: '@lidozs55/dsh-schedule/client.style.js',
   factory: () => `
 .bsch-panel { display: flex; flex-direction: column; height: 100%; min-width: 0; color: var(--dsw-alias-label-primary); font-size: 13px; line-height: 1.5; }
 .bsch-tabs { display: flex; gap: 4px; padding: 8px; border-bottom: 0.5px solid var(--dsw-alias-border-l1); }

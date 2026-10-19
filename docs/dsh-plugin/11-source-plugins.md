@@ -1,6 +1,6 @@
 # 11 · 来源适配器契约（新增学校/导入格式）
 
-> 一句话：**核心 `@buaaer/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
+> 一句话：**核心 `@lidozs55/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
 > 本仓库的北航适配器 `@buaaer/dsh-schedule-buaa` 是第一个实现，可当作模板。
 
 ---
@@ -8,10 +8,10 @@
 ## 1. 依赖方向
 
 ```
-@buaaer/dsh-schedule          （核心：数据/服务/UI/提醒/通用工具）
+@lidozs55/dsh-schedule          （核心：数据/服务/UI/提醒/通用工具）
         ▲              ▲
         │              │
-@buaaer/dsh-schedule-buaa   @buaaer/dsh-schedule-bridge
+@buaaer/dsh-schedule-buaa   @lidozs55/dsh-schedule-bridge
 （北航来源适配器）           （桌宠表面，只读派生集）
 ```
 
@@ -93,7 +93,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
 
 ## 5. 新增一个来源插件（清单）
 
-1. **建包**：`dsh-plugin/buaaer-schedule-<source>/`，`name: "@buaaer/dsh-schedule-<source>"`，
+1. **建包**：`dsh-plugin/dsh-schedule-<source>/`（北航适配器即 `dsh-plugin/buaaer-schedule-buaa/`），
+   `name: "@lidozs55/dsh-schedule-<source>"`，
    `exports: { ".": "./index.js", "./client": "./client.js" }`，`dsh.bundle.patch` 插入自己的 row。
 2. **Host 入口**：
 

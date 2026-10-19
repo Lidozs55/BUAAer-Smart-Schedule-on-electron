@@ -16,7 +16,7 @@
       "inject": [
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-layout",
-        "@buaaer/dsh-schedule"
+        "@lidozs55/dsh-schedule"
       ]
     }
   },

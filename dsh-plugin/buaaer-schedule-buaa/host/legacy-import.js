@@ -3,7 +3,7 @@
  * `scripts/export-legacy-db.mjs` (snake_case, naive Beijing datetimes).
  *
  * The generic schedule core's own export/import round-trip lives in
- * `@buaaer/dsh-schedule`; this adapter only knows the BUAAer legacy shape.
+ * `@lidozs55/dsh-schedule`; this adapter only knows the BUAAer legacy shape.
  *
  * Legacy numeric priority folds onto the three-level enum; `urgency` and
  * `color` are dropped by design. The task→entry link is re-keyed through

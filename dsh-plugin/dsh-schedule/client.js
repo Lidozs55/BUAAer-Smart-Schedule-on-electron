@@ -1,5 +1,5 @@
 /**
- * Client half of @buaaer/dsh-schedule. Loads the package-local chunks
+ * Client half of @lidozs55/dsh-schedule. Loads the package-local chunks
  * (`require.async('./client.*.js')` — the module system's chunk protocol;
  * core must materialize before the chunks that require it), then
  * registers the `main` panel (日程/任务/剪贴板 tabs inside), its
@@ -8,7 +8,7 @@
  * inject through `ctx.effect`.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule',
+  id: '@lidozs55/dsh-schedule',
   factory: (require) => {
     const NS = 'buaaerSchedule'
 
@@ -57,7 +57,7 @@ window.__ModuleLoader__.load({
 
         ctx.effect(() => {
           const el = document.createElement('style')
-          el.dataset.plugin = '@buaaer/dsh-schedule'
+          el.dataset.plugin = '@lidozs55/dsh-schedule'
           el.textContent = style
           document.head.append(el)
           return () => el.remove()

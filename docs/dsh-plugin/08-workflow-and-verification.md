@@ -36,7 +36,7 @@
 DSH_HOME=<空临时目录> dsh web
 
 # 2) 另开终端，同一 DSH_HOME 下把 bundle 链接安装进 web profile
-DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaaer-schedule 绝对路径>
+DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/dsh-schedule 绝对路径>
 DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaaer-schedule-buaa 绝对路径>
 ```
 

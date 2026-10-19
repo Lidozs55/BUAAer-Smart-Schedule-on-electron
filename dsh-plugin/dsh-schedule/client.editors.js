@@ -9,10 +9,10 @@
  * holiday / swapped class never mutates the synced weekly rule.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.editors.js',
+  id: '@lidozs55/dsh-schedule/client.editors.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
-    const gridm = require('@buaaer/dsh-schedule/client.gridmath.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
+    const gridm = require('@lidozs55/dsh-schedule/client.gridmath.js')
     const { React, h, field, pad2, dateKey } = core
     const { useState, useMemo } = React
     const { Modal, ConfirmDialog } = core

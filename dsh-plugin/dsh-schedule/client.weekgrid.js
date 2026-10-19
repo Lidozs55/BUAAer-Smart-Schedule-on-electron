@@ -29,10 +29,10 @@
  *   - click a header cell to move the window anchor to that day.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.weekgrid.js',
+  id: '@lidozs55/dsh-schedule/client.weekgrid.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
-    const grid = require('@buaaer/dsh-schedule/client.gridmath.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
+    const grid = require('@lidozs55/dsh-schedule/client.gridmath.js')
     const { React, CATEGORY_TOKEN, addDays, dateToZonedIso } = core
     const { useState, useEffect, useRef, useMemo } = React
     const {

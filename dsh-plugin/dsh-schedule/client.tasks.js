@@ -3,13 +3,13 @@
  * completed) with an SVG progress ring and an editor dialog.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.tasks.js',
+  id: '@lidozs55/dsh-schedule/client.tasks.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
     const { React, h, field } = core
     const { useState, useMemo } = React
     const { Modal, ConfirmDialog } = core
-    const { toLocalInput, zoneLocal } = require('@buaaer/dsh-schedule/client.editors.js')
+    const { toLocalInput, zoneLocal } = require('@lidozs55/dsh-schedule/client.editors.js')
 
     const TYPES = ['homework', 'exam', 'lecture', 'other']
     const PRIORITIES = ['high', 'medium', 'low']

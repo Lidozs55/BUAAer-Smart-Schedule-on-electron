@@ -4,9 +4,9 @@
  * (BUAA JW, other schools) live in their own bundles.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.settings.js',
+  id: '@lidozs55/dsh-schedule/client.settings.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
     const { React, h, field } = core
     const { useState, useEffect } = React
 

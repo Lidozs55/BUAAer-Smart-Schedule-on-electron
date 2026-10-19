@@ -13,13 +13,13 @@
 | **bundle** | 一个 npm 包，用 `package.json` 声明 `dsh.bundle.patch`，用 YAML patch 把若干 plugin row 插进 Loader 组合 | 包目录 |
 | **profile** | 用户当前的插件组合（一组有序的 patch 层叠加在 bundle 的 row 列表上） | `$DSH_PROFILE_DIR` |
 
-一个 bundle 可以只含一个 plugin row，也可以插入多行。**本插件（`@buaaer/dsh-schedule`）就是一个单 row bundle**。
+一个 bundle 可以只含一个 plugin row，也可以插入多行。**本插件（`@lidozs55/dsh-schedule`）就是一个单 row bundle**。
 
 ---
 
 ## 2. 最小可用 bundle（Host-only）
 
-目录（建议放在本仓库内，例如 `dsh-plugin/buaaer-schedule/`）：
+目录（建议放在本仓库内，例如 `dsh-plugin/dsh-schedule/`）：
 
 ```
 buaaer-schedule/
@@ -32,7 +32,7 @@ buaaer-schedule/
 
 ```json
 {
-  "name": "@buaaer/dsh-schedule",
+  "name": "@lidozs55/dsh-schedule",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -46,7 +46,7 @@ buaaer-schedule/
 ```yaml
 - insert:
     - id: buaaer-schedule
-      name: '@buaaer/dsh-schedule'
+      name: '@lidozs55/dsh-schedule'
       config: {}
 ```
 
@@ -143,7 +143,7 @@ export const Config = Schema.object({
 
 ```
 cordis_inspect_query { platform: "host", provider: "Config",
-  method: "listConfigs", input: { name: "@buaaer/dsh-schedule" } }
+  method: "listConfigs", input: { name: "@lidozs55/dsh-schedule" } }
 ```
 
 目录页给出每个 entry 的 id 与 Config 状态；再用 `input: { entry: "<id>" }` 取该 entry 的投影 JSON Schema（注意跟随返回文档里的 `$defs` 引用）。
@@ -219,10 +219,10 @@ cordis_inspect_query { platform: "host", provider: "Config",
 
 ## 9. 本仓库的落位
 
-实际产物在 `dsh-plugin/buaaer-schedule/`（Host 入口 + `host/` 模块 + Client 入口 + `client.*.js` 分块），完整代码地图见 `00-architecture.md` §1。本仓库的约定：
+实际产物在 `dsh-plugin/dsh-schedule/`（Host 入口 + `host/` 模块 + Client 入口 + `client.*.js` 分块），完整代码地图见 `00-architecture.md` §1。本仓库的约定：
 
 - 文档放 `docs/dsh-plugin/`；旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照，验收通过后删除。
-- bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@buaaer/dsh-schedule` / `buaaer-schedule` 已定死。
+- bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@lidozs55/dsh-schedule` / `buaaer-schedule` 已定死（核心与桥原用 `@buaaer/` 前缀，与北航无关，已改为 `@lidozs55/` 并重装过一次）。
 
 ---
 

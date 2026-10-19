@@ -6,17 +6,17 @@
  * anchored on today (before 04:00, yesterday), not on Monday.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.calendar.js',
+  id: '@lidozs55/dsh-schedule/client.calendar.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
-    const grid = require('@buaaer/dsh-schedule/client.gridmath.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
+    const grid = require('@lidozs55/dsh-schedule/client.gridmath.js')
     const { React, h, addDays, zonedAt, pad2, dateKey } = core
     const { useState, useCallback, useEffect } = React
     const { useScheduleData, useUndo, ConfirmDialog } = core
-    const { WeekGrid } = require('@buaaer/dsh-schedule/client.weekgrid.js')
-    const { EventEditor, BatchEditor, CourseEditor } = require('@buaaer/dsh-schedule/client.editors.js')
-    const { TasksTab } = require('@buaaer/dsh-schedule/client.tasks.js')
-    const { ClipboardTab } = require('@buaaer/dsh-schedule/client.clipboard.js')
+    const { WeekGrid } = require('@lidozs55/dsh-schedule/client.weekgrid.js')
+    const { EventEditor, BatchEditor, CourseEditor } = require('@lidozs55/dsh-schedule/client.editors.js')
+    const { TasksTab } = require('@lidozs55/dsh-schedule/client.tasks.js')
+    const { ClipboardTab } = require('@lidozs55/dsh-schedule/client.clipboard.js')
 
     const DAY_MS = 86_400_000
     const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/

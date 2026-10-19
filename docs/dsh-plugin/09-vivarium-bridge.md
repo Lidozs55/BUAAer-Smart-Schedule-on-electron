@@ -1,6 +1,6 @@
-# 09 · vivarium 桥插件(`@buaaer/dsh-schedule-bridge`)
+# 09 · vivarium 桥插件(`@lidozs55/dsh-schedule-bridge`)
 
-> **状态:已立项并落地 v1(2026-10-19)**,位于 `dsh-plugin/buaaer-schedule-bridge/`(本仓库,
+> **状态:已立项并落地 v1(2026-10-19)**,位于 `dsh-plugin/dsh-schedule-bridge/`(本仓库,
 > host-only bundle,无 client 半、无 UI)。v1 交付两条联动:提醒气泡 + 状态信号。
 > 拖拽收纳(文本拖给桌宠→Agent 落库)待 vivarium 基座提供外部拖放目标 API 后立项——
 > 契约 v1(clause §2 interactions.drag)只有宠物自身的 move/throw,无内容拖入面。
@@ -11,9 +11,9 @@
 
 | 插件 | 拥有 | 不拥有 |
 |---|---|---|
-| 核心 `@buaaer/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、`ctx.schedule` 镜像与撤销、投递会话、`upcomingReminders()` 派生集) | 投递表面;桌宠概念;任何学校/导入来源 |
+| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、`ctx.schedule` 镜像与撤销、投递会话、`upcomingReminders()` 派生集) | 投递表面;桌宠概念;任何学校/导入来源 |
 | 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、教务同步、旧库导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
-| 桥 `@buaaer/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(含「已完成」快捷动作)、任务状态信号广播 | 数据副本;提醒策略与时序真相;UI |
+| 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(含「已完成」快捷动作)、任务状态信号广播 | 数据副本;提醒策略与时序真相;UI |
 
 时序真相只有一个(`ctx.schedule`,归核心插件);投递表面可以有多个(会话消息兜底,桌宠气泡增强)。
 桌宠关闭、桥卸载、vivarium 整个不存在——提醒仍完整可用。桥 `inject: ['buaaerSchedule', 'vivarium']`,

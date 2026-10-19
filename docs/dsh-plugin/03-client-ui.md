@@ -9,7 +9,7 @@
 
 ```json
 {
-  "name": "@buaaer/dsh-schedule",
+  "name": "@lidozs55/dsh-schedule",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -45,7 +45,7 @@
 
 ```js
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule',
+  id: '@lidozs55/dsh-schedule',
   factory(require) {
     const React = require('react');            // React 来自浏览器模块表
     const h = React.createElement;
@@ -58,7 +58,7 @@ window.__ModuleLoader__.load({
       apply(ctx) {
         ctx.effect(() => {
           const el = document.createElement('style');
-          el.dataset.plugin = '@buaaer/dsh-schedule';
+          el.dataset.plugin = '@lidozs55/dsh-schedule';
           el.textContent = '.buaaer-calendar { color: var(--dsw-alias-label-primary); }';
           document.head.append(el);
           return () => el.remove();

@@ -10,16 +10,16 @@
 
 三个 bundle，依赖方向是单向的：
 
-- **日程核心** `dsh-plugin/buaaer-schedule/`（包名 `@buaaer/dsh-schedule`，row id
+- **日程核心** `dsh-plugin/dsh-schedule/`（包名 `@lidozs55/dsh-schedule`，row id
   `buaaer-schedule`）——通用日程数据、服务、工具、UI、提醒。不知道任何学校/导入来源。
 - **北航来源适配器** `dsh-plugin/buaaer-schedule-buaa/`（`@buaaer/dsh-schedule-buaa`，
   row id `buaaer-schedule-buaa`）——依赖核心注入的 `buaaerSchedule`，只拥有北航 SSO、
   教务同步、旧库导入与来源状态。
-- **桌宠桥** `dsh-plugin/buaaer-schedule-bridge/`（`@buaaer/dsh-schedule-bridge`，host-only，
+- **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
   见 `09`）——只依赖核心的读面与提醒派生集。
 
 ```
-dsh-plugin/buaaer-schedule/
+dsh-plugin/dsh-schedule/
 ├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
 ├── cordis.patch.yml      # 插入 row buaaer-schedule
 ├── index.js              # Host 入口：inject 声明 + Config + 装配（见 §4.3）
@@ -71,7 +71,7 @@ dsh-plugin/buaaer-schedule-buaa/
 | # | 决策 |
 |---|---|
 | R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；移除自主调色体系；条目颜色 = 类别枚举 → token 映射（§3.3，唯一一处常量） |
-| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js`），不是独立插件；桌宠联动经**桥插件** `@buaaer/dsh-schedule-bridge`（已落地 v1，见 `09`）：策略/真相在核心，投递表面（会话兜底 + 桌宠气泡）可多个 |
+| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js`），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地 v1，见 `09`）：策略/真相在核心，投递表面（会话兜底 + 桌宠气泡）可多个 |
 | R3 | 主面板 = 同一面板内 `日程 \| 任务` 双 tab（窄幅侧栏设计），不搞左右分栏 |
 | R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `buaaer_*` 工具 |
 | R5 | 自动排期、休息条目、由任务生成条目：**不做**（原实现本就是坏的/恒空的） |

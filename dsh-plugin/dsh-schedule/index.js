@@ -1,5 +1,5 @@
 /**
- * Host half of @buaaer/dsh-schedule — the generic schedule core.
+ * Host half of @lidozs55/dsh-schedule — the generic schedule core.
  *
  * Opens the storage domain, exposes the `buaaerSchedule` service, then wires
  * the generic Agent tools, reminder-mirroring subsystem, prompt section, and

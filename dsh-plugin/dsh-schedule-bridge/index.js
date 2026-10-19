@@ -1,5 +1,5 @@
 /**
- * @buaaer/dsh-schedule-bridge — the schedule ⇄ vivarium bridge (docs 09 v2).
+ * @lidozs55/dsh-schedule-bridge — the schedule ⇄ vivarium bridge (docs 09 v2).
  *
  * Boundary (unchanged from the 09 v1 ruling, restated for the feed era):
  * timing policy and truth stay in the MAIN plugin (reminder subsystem owns

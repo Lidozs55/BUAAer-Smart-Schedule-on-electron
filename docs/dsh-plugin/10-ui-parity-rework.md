@@ -14,7 +14,7 @@
 
 ## 0. 关键路径与验证方式
 
-- 迁移侧代码：`dsh-plugin/buaaer-schedule/`（client 半 = `client.js` + `client.*.js` 分块；host 半 = `index.js` + `host/*.js`）
+- 迁移侧代码：`dsh-plugin/dsh-schedule/`（client 半 = `client.js` + `client.*.js` 分块；host 半 = `index.js` + `host/*.js`）
 - 原版参照（意图的唯一事实来源）：
   - `frontend/src/components/CalendarView.vue`（周视图全部交互）
   - `frontend/src/components/TaskSidebar.vue`（任务筛选/排序/进度）

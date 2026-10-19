@@ -3,7 +3,7 @@
  * `/api` client, data hooks, and the small UI atoms every page reuses.
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.core.js',
+  id: '@lidozs55/dsh-schedule/client.core.js',
   factory: (require) => {
     const React = require('react')
     const { useState, useEffect, useRef, useCallback } = React

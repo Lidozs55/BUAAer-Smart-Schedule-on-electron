@@ -14,9 +14,9 @@
  * exposed to plugins in 0.2.0-rc.2, so the text rides the prompt itself).
  */
 window.__ModuleLoader__.load({
-  id: '@buaaer/dsh-schedule/client.clipboard.js',
+  id: '@lidozs55/dsh-schedule/client.clipboard.js',
   factory: (require) => {
-    const core = require('@buaaer/dsh-schedule/client.core.js')
+    const core = require('@lidozs55/dsh-schedule/client.core.js')
     const { React, h } = core
     const { useState, useEffect } = React
     const { ConfirmDialog } = core
