@@ -100,7 +100,7 @@ export function createScheduleService(ctx, domain) {
       try {
         listener({ tables, revision })
       } catch (error) {
-        ctx.logger.warn('buaaerSchedule listener failed: %s', error.message)
+        ctx.logger.warn('scheduleCore listener failed: %s', error.message)
       }
     }
   }
@@ -505,7 +505,7 @@ export function createScheduleService(ctx, domain) {
     /**
      * Opaque per-source state. A source plugin owns one key and decides its
      * own shape; the core only guarantees durable JSON round-tripping.
-     * @param {string} source - source id, e.g. `buaa`.
+     * @param {string} source - source id, e.g. `school-portal`.
      * @returns {object} the stored object, or `{}` when never written.
      */
     getSourceState(source) {
@@ -533,15 +533,6 @@ export function createScheduleService(ctx, domain) {
       })
       changed(['global'])
       return { ...value }
-    },
-
-    /**
-     * Raw v1 global fields, exposed ONLY for one-shot migration by source
-     * plugins that predate `sourceState`. New code must not use this.
-     * @deprecated
-     */
-    legacyGlobal() {
-      return { ...domain.global.get() }
     },
 
     /** Snapshot for the client panel: one fetch, everything it renders. */

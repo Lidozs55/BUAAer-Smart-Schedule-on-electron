@@ -1,7 +1,7 @@
 /**
  * Bundle-local calendar helpers. A source adapter must not import another
  * bundle's internals: the schedule core's public seam is the injected
- * `buaaerSchedule` service, not its time module.
+ * `scheduleCore` service, not its time module.
  */
 
 const DAY_MS = 86_400_000

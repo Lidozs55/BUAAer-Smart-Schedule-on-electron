@@ -26,20 +26,12 @@ export const WEEK_RANGE_RE = /^\d{1,2}(-\d{1,2})?(,\d{1,2}(-\d{1,2})?)*$/
  * `sourceState` is the extension point for import-source plugins: each
  * source owns one JSON string under its own key. The schedule core never
  * interprets those values, so adding a source needs no schema change.
- *
- * `buaaId` / `termCode` are v1 fields retained ONLY so existing profiles
- * keep opening without a data migration. The core no longer reads them;
- * the BUAA source plugin migrates them into `sourceState.buaa` once.
  */
 const globalSchema = z.object({
   /** Monday of teaching week 1, `YYYY-MM-DD`; '' until configured. */
   termStart: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/),
   /** Per-source adapter state: source id → JSON string. */
   sourceState: z.record(z.string(), z.string()).default({}),
-  /** @deprecated v1 compatibility field; migrated by the BUAA source plugin. */
-  buaaId: z.string().default(''),
-  /** @deprecated v1 compatibility field; migrated by the BUAA source plugin. */
-  termCode: z.string().default(''),
 })
 
 const courseSchema = z.object({
@@ -82,12 +74,12 @@ export const PRIORITIES = ['high', 'medium', 'low']
 
 /**
  * Tasks may be tagged by any source plugin, so the source is an open id
- * rather than a fixed enum: `manual`, `import`, `agent`, `buaa_sync`, or a
+ * rather than a fixed enum: `manual`, `import`, `agent`, `source_sync`, or a
  * future source's own id. The shape matches source-state ids on purpose.
  */
 export const SOURCE_ID_RE = /^[a-z][a-z0-9_-]*$/
 /** @deprecated Built-in tags for reference only; the schema accepts any id. */
-export const TASK_SOURCES = ['manual', 'buaa_sync', 'agent', 'import']
+export const TASK_SOURCES = ['manual', 'source_sync', 'agent', 'import']
 
 const taskSchema = z.object({
   id: z.string().min(1),
@@ -123,7 +115,7 @@ const entrySchema = z.object({
 })
 
 export const scheduleDomainSpec = defineDomain({
-  name: 'buaaer_schedule',
+  name: 'schedule_core',
   version: 1,
   tables: {
     courses: domainTable(courseSchema),
@@ -137,6 +129,6 @@ export const scheduleDomainSpec = defineDomain({
   },
   global: {
     schema: globalSchema,
-    initial: { termStart: '', sourceState: {}, buaaId: '', termCode: '' },
+    initial: { termStart: '', sourceState: {} },
   },
 })

@@ -22,7 +22,7 @@
 目录（建议放在本仓库内，例如 `dsh-plugin/dsh-schedule/`）：
 
 ```
-buaaer-schedule/
+schedule-core/
 ├── package.json          # bundle 清单
 ├── cordis.patch.yml      # 把本包的 row 插入 profile
 └── index.js              # Host 半：插件本体
@@ -45,7 +45,7 @@ buaaer-schedule/
 
 ```yaml
 - insert:
-    - id: buaaer-schedule
+    - id: schedule-core
       name: '@lidozs55/dsh-schedule'
       config: {}
 ```
@@ -222,7 +222,7 @@ cordis_inspect_query { platform: "host", provider: "Config",
 实际产物在 `dsh-plugin/dsh-schedule/`（Host 入口 + `host/` 模块 + Client 入口 + `client.*.js` 分块），完整代码地图见 `00-architecture.md` §1。本仓库的约定：
 
 - 文档放 `docs/dsh-plugin/`；旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照，验收通过后删除。
-- bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@lidozs55/dsh-schedule` / `buaaer-schedule` 已定死（核心与桥原用 `@buaaer/` 前缀，与北航无关，已改为 `@lidozs55/` 并重装过一次）。
+- bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@lidozs55/dsh-schedule` / `schedule-core` 已定死（核心与桥原用 `@buaaer/` 前缀，与北航无关，已改为 `@lidozs55/` 并重装过一次）。
 
 ---
 

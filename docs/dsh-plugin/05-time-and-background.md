@@ -183,7 +183,7 @@ type CommandResult =
 - 事件 `'commands/change'()`：命令注册/注销后发出。
 - 客户端用 `ctx.remote.commands.execute(agent, line, submittedAttachments, signal)` 执行；`ctx.remote.commands.list()` 拿目录。**这是手写插件让 UI 触发 Host 操作的最省事路径**（见 `03-client-ui.md`）。
 
-本插件注册的命令：`/buaaer-sync`（立刻同步课表）、`/buaaer-import <json路径>`（旧库导入）。
+本插件注册的命令：`/buaa-sync`（立刻同步课表）、`/buaa-import <json路径>`（旧库导入）。
 
 ---
 

@@ -1,5 +1,5 @@
 /**
- * CalendarPanel: the `main` panel behind key `buaaer-calendar` — a
+ * CalendarPanel: the `main` panel behind key `schedule-calendar` — a
  * narrow-layout shell with three inline tabs (日程 | 任务 | 剪贴板,
  * decisions R3 + R8-rework). The week window anchor lives HERE (docs/10
  * P8) so it survives tab switches: the window is "anchor day .. +6",

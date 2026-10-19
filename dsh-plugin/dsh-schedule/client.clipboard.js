@@ -84,8 +84,8 @@ window.__ModuleLoader__.load({
 
     const assemble = items => [
       '请把下面每一条解析为日程项并落库：',
-      '- 有明确日期时间的建成条目（buaaer_entry_batch_create）',
-      '- 属于作业/考试/截止的建成任务（buaaer_task_create）',
+      '- 有明确日期时间的建成条目（sched_entry_batch_create）',
+      '- 属于作业/考试/截止的建成任务（sched_task_create）',
       '- 时间信息不完整的先向我确认，不要猜',
       ...items.map((item, index) => `${index + 1}. ${item}`),
     ].join('\n')

@@ -81,7 +81,7 @@ const taskSchema = z.object({
 })
 
 export const scheduleSpec = defineDomain({
-  name: 'buaaer_schedule',             // 必须匹配 UNIT_NAME_RE = /^[a-z][a-z0-9_]*$/
+  name: 'schedule_core',             // 必须匹配 UNIT_NAME_RE = /^[a-z][a-z0-9_]*$/
   version: 1,
   tables: {
     tasks: domainTable(taskSchema),
@@ -119,7 +119,7 @@ export function apply(ctx) {
       domain = d
     })
     return async () => { closed = true; await domain?.close() }
-  }, 'buaaer.domainClose')
+  }, 'schedule: domain close')
 }
 ```
 

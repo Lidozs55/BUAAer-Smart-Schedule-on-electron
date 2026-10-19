@@ -1,4 +1,4 @@
 - insert:
-    - id: buaaer-schedule-bridge
+    - id: schedule-bridge
       name: '@lidozs55/dsh-schedule-bridge'
       config: {}

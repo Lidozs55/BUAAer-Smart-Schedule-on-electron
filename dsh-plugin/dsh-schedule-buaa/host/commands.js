@@ -1,7 +1,7 @@
 /**
- * Human commands for the BUAA source: `/buaaer-sync` reuses a cached SSO
+ * Human commands for the BUAA source: `/buaa-sync` reuses a cached SSO
  * jar — the command input is recorded in the session log, so passwords must
- * never ride through here; `/buaaer-import` loads a legacy JSON dump.
+ * never ride through here; `/buaa-import` loads a legacy JSON dump.
  */
 import { importLegacyPayload } from './legacy-import.js'
 import { SOURCE_ID } from './state.js'
@@ -17,7 +17,7 @@ export function registerBuaaCommands(ctx, deps) {
   const disposers = []
 
   disposers.push(commands.register({
-    name: 'buaaer-sync',
+    name: 'buaa-sync',
     description: '立即同步北航课表（需要本进程内已有登录会话；带密码的同步请在设置页或会话内进行）',
     handler: async invocation => {
       const buaaId = deps.service.getSourceState(SOURCE_ID).buaaId
@@ -42,13 +42,13 @@ export function registerBuaaCommands(ctx, deps) {
 
   if (fs) {
     disposers.push(commands.register({
-      name: 'buaaer-import',
+      name: 'buaa-import',
       description: '从旧版导出的 JSON 文件导入课程/任务/条目（scripts/export-legacy-db.mjs 的产物）',
       input: { hint: '<导出 JSON 的路径>' },
       handler: async invocation => {
         const path = invocation.rawInput.trim()
         if (path === '') {
-          return { kind: 'error', text: '用法：/buaaer-import <export-legacy-db.mjs 导出的 JSON 路径>' }
+          return { kind: 'error', text: '用法：/buaa-import <export-legacy-db.mjs 导出的 JSON 路径>' }
         }
         try {
           const target = await fs.resolve(path, { cwd: invocation.agent?.cwd })

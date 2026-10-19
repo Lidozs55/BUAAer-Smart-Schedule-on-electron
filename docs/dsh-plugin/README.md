@@ -7,7 +7,7 @@
 写作前提：**读者此前没有接触过 DSH 插件开发**——所以这里既有"本项目长什么样"，也有"DSH 侧接口到底长什么样"。
 
 > **当前状态（2026-10-20）**：核心/来源拆分完成，核心代码在 `dsh-plugin/dsh-schedule/`，
-> 北航适配器在 `dsh-plugin/buaaer-schedule-buaa/`；桌宠桥 `dsh-plugin/dsh-schedule-bridge/`
+> 北航适配器在 `dsh-plugin/dsh-schedule-buaa/`；桌宠桥 `dsh-plugin/dsh-schedule-bridge/`
 > 保持 v1（`09`）。架构基线见 `00`，新增来源的契约见 `11`。
 
 ---
@@ -95,9 +95,9 @@ cordis_inspect_query { platform: "client", provider: "Theme",   method: "listTok
 
 - 文档语言：中文；**所有标识符、签名、token 名保持英文原样**，不要翻译。
 - 旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照（`00` §7），验收通过后删除。
-- 包名/row id 现已定死：核心 `@lidozs55/dsh-schedule` / `buaaer-schedule`，北航适配器
-  `@buaaer/dsh-schedule-buaa` / `buaaer-schedule-buaa`，桥 `@lidozs55/dsh-schedule-bridge` /
-  `buaaer-schedule-bridge`；改名等于重装（核心与桥原为 `@buaaer/` 前缀，与北航无关，已改到
+- 包名/row id 现已定死：核心 `@lidozs55/dsh-schedule` / `schedule-core`，北航适配器
+  `@buaaer/dsh-schedule-buaa` / `buaa-schedule`，桥 `@lidozs55/dsh-schedule-bridge` /
+  `schedule-bridge`；改名等于重装（核心与桥原为 `@buaaer/` 前缀，与北航无关，已改到
   `@lidozs55/`）。
 - 不要把 DSH 侧文档整段抄进代码注释：注释写"为什么"，接口细节留给文档与 `cordis_inspect_query`。
 

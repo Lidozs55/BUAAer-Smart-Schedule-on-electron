@@ -194,7 +194,7 @@
   （bump package.json 版本也不变），URL 永远是 `?rev=<启动时算好的串>`；② chunk 响应带
   `cache-control: max-age=31536000, immutable`——浏览器**磁盘缓存**在 rev 不变时永不回源；
   ③ 服务端在**启动时快照** client 文件，改源码后不重启 host，原 rev URL 返回旧内容。
-  因此改 client 后必须：重启 host **并** `fetch(url,{cache:'reload'})` 每个 buaaer 分块再
+  因此改 client 后必须：重启 host **并** `fetch(url,{cache:'reload'})` 每个插件分块再
   reload 页面。用户侧"改了没生效/半新半旧混渲染"（如小日历无样式平铺）基本都是这个机制。
 
 ## 5. 完成与验证记录(2026-10-19)
@@ -309,7 +309,7 @@ scratch web 宿主(`DSH_HOME=<tmp> dsh web`,浏览器自动化)验证结果:
    `CATEGORY_TOKEN[?] ?? other` 全渲染灰色"其他"；且 service 不枚举校验，非法值一旦落库，
    重启时存储层 z.enum 失败直接炸掉插件激活。修复三处：import 建立旧词→七类归一化映射
    （lecture 归 course，*homework/*report/*delivery 归 homework，exam_prep 归 exam）；
-   service `entryInput` 落库前枚举校验（fail fast，防存储中毒）；`buaaer_entry_create`
+   service `entryInput` 落库前枚举校验（fail fast，防存储中毒）；`sched_entry_create`
    与批量工具描述里写明"课程类务必传 category:course"，堵住剪贴板→Agent 落库这条路径
    的默认灰色。
 4. **R11-4 课程色从未显形**：宿主主题把 `--dsw-alias-brand-primary` 解析成 label 白

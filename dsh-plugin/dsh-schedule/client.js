@@ -10,7 +10,7 @@
 window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule',
   factory: (require) => {
-    const NS = 'buaaerSchedule'
+    const NS = 'scheduleCore'
 
     const icon = path => (props) => {
       const size = props.size ?? 16
@@ -48,12 +48,12 @@ window.__ModuleLoader__.load({
         const { SettingsSection } = await require.async('./client.settings.js')
         const style = await require.async('./client.style.js')
 
-        ctx.effect(() => ctx.locale.register(NS, { zh: core.zh, en: core.en }), 'buaaer: dictionaries')
+        ctx.effect(() => ctx.locale.register(NS, { zh: core.zh, en: core.en }), 'schedule: dictionaries')
         const t = ctx.locale.bind(NS)
 
         // Clipboard capture is global, like the original app: copying text
         // while any other panel/session is open still fills the queue.
-        ctx.effect(() => clipboard.startClipboardMonitor(), 'buaaer: clipboard monitor')
+        ctx.effect(() => clipboard.startClipboardMonitor(), 'schedule: clipboard monitor')
 
         ctx.effect(() => {
           const el = document.createElement('style')
@@ -61,7 +61,7 @@ window.__ModuleLoader__.load({
           el.textContent = style
           document.head.append(el)
           return () => el.remove()
-        }, 'buaaer: styles')
+        }, 'schedule: styles')
 
         // Shared inject shares: the /api client, a releasable timer, and
         // the session helpers the clipboard panel needs (D-2).
@@ -77,13 +77,16 @@ window.__ModuleLoader__.load({
         const share = () => ({ env })
 
         ctx.slots.inject('main', () => ctx.slots.register(
-          { name: 'main', key: 'buaaer-calendar', locale: NS, inject: share }, CalendarPanel))
+          { name: 'main', key: 'schedule-calendar', locale: NS, inject: share }, CalendarPanel))
         // The list id must equal the main key it selects.
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
-          { name: 'sidebar.panellist', id: 'buaaer-calendar', order: 40, locale: NS, label: () => t('panel.calendar') },
+          { name: 'sidebar.panellist', id: 'schedule-calendar', order: 40, locale: NS, label: () => t('panel.calendar') },
           calendarIcon))
         ctx.slots.inject('settings.section', () => ctx.slots.register(
-          { name: 'settings.section', id: 'buaaer-schedule', order: 100, locale: NS, label: () => t('panel.settings'), inject: share },
+          { name: 'settings.section', id: 'schedule-core', order: 100, locale: NS, label: () => t('panel.settings'), inject: share,
+            // Source adapters append their settings cards here instead of
+            // registering a section of their own (one 日程设置 page).
+            children: { 'schedule.settings.blocks': { kind: 'list', scope: 'root' } } },
           SettingsSection))
       },
     }

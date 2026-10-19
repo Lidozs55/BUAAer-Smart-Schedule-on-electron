@@ -11,14 +11,14 @@
  * (lead minutes) lives here and nowhere else; delivery surfaces are the
  * bridge's concern.
  *
- * Reminder identity: schedule record titles start with `[buaaer:<taskId>]`,
+ * Reminder identity: schedule record titles start with `[sched:<taskId>]`,
  * which is how resyncs recognize their own records without extra storage.
  */
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
 
 const remindersDomainSpec = defineDomain({
-  name: 'buaaer_reminders',
+  name: 'sched_reminders',
   version: 1,
   tables: {},
   global: {
@@ -27,7 +27,7 @@ const remindersDomainSpec = defineDomain({
   },
 })
 
-const TITLE_PREFIX = '[buaaer:'
+const TITLE_PREFIX = '[sched:'
 const MAX_TITLE = 120
 
 const leadMinutesFor = (config, taskType) =>
@@ -52,15 +52,15 @@ export function attachReminders(ctx, service, config) {
   const schedule = ctx.get('schedule')
   const sessionController = ctx.get('sessionController')
   if (!config.remindersEnabled) {
-    ctx.logger.info('buaaer-reminders: disabled by config')
+    ctx.logger.info('sched-reminders: disabled by config')
     return
   }
   if (!schedule) {
-    ctx.logger.info('buaaer-reminders: ctx.schedule absent (enable「自动化任务」to arm reminders); subsystem idles')
+    ctx.logger.info('sched-reminders: ctx.schedule absent (enable「自动化任务」to arm reminders); subsystem idles')
     return
   }
   if (!sessionController) {
-    ctx.logger.info('buaaer-reminders: sessionController seam absent in this profile; subsystem idles')
+    ctx.logger.info('sched-reminders: sessionController seam absent in this profile; subsystem idles')
     return
   }
 
@@ -77,14 +77,14 @@ export function attachReminders(ctx, service, config) {
         }
         disposeWire = wire(ctx, { service, config, schedule, sessionController, domain })
       } catch (error) {
-        ctx.logger.warn('buaaer-reminders: mirroring disabled (%s)', error.message)
+        ctx.logger.warn('sched-reminders: mirroring disabled (%s)', error.message)
       }
     })()
     return () => {
       closed = true
       disposeWire()
     }
-  }, 'buaaer: reminders')
+  }, 'schedule: reminders')
 }
 
 function wire(ctx, { service, config, schedule, sessionController, domain }) {
@@ -96,7 +96,7 @@ function wire(ctx, { service, config, schedule, sessionController, domain }) {
     const created = await sessionController.create({})
     boundSessionId = created.sessionId
     await domain.global.set({ boundSessionId })
-    ctx.logger.info('buaaer-reminders: bound to session %s', boundSessionId)
+    ctx.logger.info('sched-reminders: bound to session %s', boundSessionId)
     return boundSessionId
   }
 
@@ -153,7 +153,7 @@ function wire(ctx, { service, config, schedule, sessionController, domain }) {
         })
       }
     } catch (error) {
-      ctx.logger.warn('buaaer-reminders: resync failed: %s', error.message)
+      ctx.logger.warn('sched-reminders: resync failed: %s', error.message)
     } finally {
       resyncing = false
     }

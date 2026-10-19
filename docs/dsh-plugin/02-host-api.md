@@ -330,7 +330,7 @@ export function apply(ctx: Context, config: Config) {
 
 ```yaml
 - insert:
-    - id: buaaer-schedule
+    - id: schedule-core
       name: '@lidozs55/dsh-schedule'
       config:
         greeting: 'Hi there'

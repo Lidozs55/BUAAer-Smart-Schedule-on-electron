@@ -8,7 +8,7 @@ const OUTPUT = { type: 'object', additionalProperties: true }
 
 export function registerBuaaTools(ctx, deps) {
   return ctx.tools.register(defineTool({
-    name: 'buaaer_course_sync',
+    name: 'buaa_course_sync',
     description: '同步北航教务课表与考试安排（后台作业：从今天起逐日抓 7 天，按周期规则 upsert，不清空旧课）。密码仅当次使用、绝不保存。',
     parameters: {
       password: { type: 'string', required: true, description: '北航统一认证密码（仅当次使用，不落盘）' },

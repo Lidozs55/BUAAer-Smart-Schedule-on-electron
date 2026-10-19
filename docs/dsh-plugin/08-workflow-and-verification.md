@@ -37,17 +37,17 @@ DSH_HOME=<空临时目录> dsh web
 
 # 2) 另开终端，同一 DSH_HOME 下把 bundle 链接安装进 web profile
 DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/dsh-schedule 绝对路径>
-DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaaer-schedule-buaa 绝对路径>
+DSH_HOME=<同上> dsh plugin --profile web add <dsh-plugin/buaa-schedule 绝对路径>
 ```
 
-- 先装核心再装来源适配器；来源插件 `inject: ['buaaerSchedule']`，核心缺失时会 park。
+- 先装核心再装来源适配器；来源插件 `inject: ['scheduleCore']`，核心缺失时会 park。
 
 - `dsh web` 监听 3080 端口，控制台会打印一条**带 token 的完整 URL**——必须打开那条 URL（裸 `http://127.0.0.1:3080` 过不了鉴权）。
 - 打开后侧边栏应出现「日程/剪贴板」入口；宿主半激活失败会打在启动日志里（fiber 状态 `failed`，`loading` 卡死 = apply 未返回）。
 - 链接安装指向源码目录：改插件源码后**重启 scratch 宿主**即生效（不需要重新 add）。
 - 用完停掉宿主、删除临时目录。不要把测试数据写进真实 profile。
 
-排查数据通道时可用两个探针区分故障层：`/connect` 有响应而 `/api/buaaer-schedule` 404 = connection 激活竞态或路由未注册（见 `00` §4.3）；两者都 404 = 宿主/鉴权层问题。
+排查数据通道时可用两个探针区分故障层：`/connect` 有响应而 `/api/schedule-core` 404 = connection 激活竞态或路由未注册（见 `00` §4.3）；两者都 404 = 宿主/鉴权层问题。
 
 ---
 

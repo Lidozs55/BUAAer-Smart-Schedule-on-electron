@@ -3,7 +3,7 @@
  * (`settings.section` → export JSON). Round-tripping an export must work.
  *
  * Source-specific legacy dumps (the old Electron SQLite export) belong to
- * their source adapter, not here — see `@buaaer/dsh-schedule-buaa`.
+ * their source adapter, not here — see docs/dsh-plugin/11-source-plugins.md.
  */
 
 const PRIORITIES = ['high', 'medium', 'low']

@@ -5,7 +5,7 @@
  * cancellable) or inline when the jobs seam is unavailable.
  *
  * The adapter owns only source-specific state (student id, term code) in
- * `buaaerSchedule.getSourceState('buaa')`; every schedule write goes
+ * `scheduleCore.getSourceState('buaa')`; every schedule write goes
  * through the core service.
  */
 import { apiGet, BuaaError, detailUrl, examsUrl, SsoSessionCache, ssoLogin } from './sso.js'
@@ -163,7 +163,7 @@ export async function runSync({ service, ctx }, creds, control = {}) {
       if (error.code === 'need_login' || error.code === 'aborted') throw error
       // One bad day shouldn't sink the whole sync (legacy behavior).
       daysFailed += 1
-      ctx.logger.warn('buaaer sync: day %s failed: %s', dateStr, error.message)
+      ctx.logger.warn('buaa sync: day %s failed: %s', dateStr, error.message)
     }
     if (i < 6) await pause(FETCH_PAUSE_MS, signal)
   }
@@ -175,7 +175,7 @@ export async function runSync({ service, ctx }, creds, control = {}) {
     examTasks.push(...parseExamItems(await apiGet(jar, examsUrl(termCode), signal)))
   } catch (error) {
     if (error.code === 'need_login' || error.code === 'aborted') throw error
-    ctx.logger.warn('buaaer sync: exams failed: %s', error.message)
+    ctx.logger.warn('buaa sync: exams failed: %s', error.message)
   }
 
   onProgress('写入课程规则…')
@@ -271,7 +271,7 @@ export function startSyncJob(deps, creds) {
   const done = new Promise((resolve, reject) => { settle = { resolve, reject } })
   try {
     const id = jobs.start({
-      kind: 'buaaer-sync',
+      kind: 'buaa-sync',
       label: `北航课表同步（${creds.buaaId || deps.service.getSourceState(SOURCE_ID).buaaId || '使用已存学号'}）`,
       run(job) {
         runSync(deps, creds, { onProgress: line => job.updateProgress(line), signal: controller.signal })
@@ -296,7 +296,7 @@ export function startSyncJob(deps, creds) {
   } catch (error) {
     // A profile without a mounted job controller rejects start(); degrade
     // to an inline run rather than failing the sync itself.
-    deps.ctx.logger.warn('buaaer sync: jobs.start unavailable (%s), running inline', error.message)
+    deps.ctx.logger.warn('buaa sync: jobs.start unavailable (%s), running inline', error.message)
     return { inline: true, done: runSync(deps, creds) }
   }
 }

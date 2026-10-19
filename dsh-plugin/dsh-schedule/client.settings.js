@@ -1,7 +1,8 @@
 /**
  * SettingsSection: the generic `settings.section` entry — teaching-week
- * anchor plus full-domain JSON export/import. Calendar-source settings
- * (BUAA JW, other schools) live in their own bundles.
+ * anchor, full-domain JSON export/import, and the `schedule.settings.blocks`
+ * child slot that calendar sources append their own cards into (so every
+ * school source shows up inside this one page, not as its own section).
  */
 window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule/client.settings.js',
@@ -49,7 +50,7 @@ window.__ModuleLoader__.load({
         const url = URL.createObjectURL(blob)
         const anchor = document.createElement('a')
         anchor.href = url
-        anchor.download = `buaaer-schedule-${new Date().toISOString().slice(0, 10)}.json`
+        anchor.download = `schedule-core-${new Date().toISOString().slice(0, 10)}.json`
         anchor.click()
         URL.revokeObjectURL(url)
       }
@@ -98,6 +99,9 @@ window.__ModuleLoader__.load({
                 type: 'file', accept: 'application/json', style: { display: 'none' },
                 onChange: e => void importJson(e),
               })))),
+        // Source adapters contribute their own cards underneath the generic
+        // ones.
+        props.renderSlot('schedule.settings.blocks', {}),
         status !== null ? h('div', {
           className: `bsch-hint${status.ok ? '' : ' bsch-error'}`,
         }, status.text) : null)

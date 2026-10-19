@@ -6,14 +6,14 @@
  * routes, which carry no auth and must never take business writes.
  *
  * Source adapters own their own routes (`/api/<source>`) and call the same
- * `buaaerSchedule` service; this file is the generic data surface only.
+ * `scheduleCore` service; this file is the generic data surface only.
  *
  * Wire shape mirrors `RemoteResult`: `{ ok: true, value } |
  * { ok: false, error: { code, message, details? } }`.
  */
 import { importSchedulePayload } from './import.js'
 
-const ROUTE_PATH = '/api/buaaer-schedule'
+const ROUTE_PATH = '/api/schedule-core'
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' }
 
 const json = (status, body) => new Response(JSON.stringify(body), {
@@ -60,7 +60,7 @@ function operations(service) {
 export function registerClientApi(ctx, deps) {
   const connection = ctx.get('connection')
   if (!connection) {
-    ctx.logger.info('buaaer-schedule: connection seam absent — client panel data channel disabled (tools still work)')
+    ctx.logger.info('schedule-core: connection seam absent — client panel data channel disabled (tools still work)')
     return () => {}
   }
   const ops = operations(deps.service)
@@ -90,7 +90,7 @@ export function registerClientApi(ctx, deps) {
         return ok(await operation(body))
       } catch (error) {
         const details = error.details === undefined ? undefined : { details: error.details }
-        ctx.logger.warn('buaaer-schedule api: %s %o', error.message, details ?? {})
+        ctx.logger.warn('schedule-core api: %s %o', error.message, details ?? {})
         return fail(error.code ?? 'error', error.message ?? String(error), error.details)
       }
     },

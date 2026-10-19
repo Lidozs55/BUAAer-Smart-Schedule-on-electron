@@ -1,4 +1,4 @@
 - insert:
-    - id: buaaer-schedule-buaa
+    - id: buaa-schedule
       name: '@buaaer/dsh-schedule-buaa'
       config: {}

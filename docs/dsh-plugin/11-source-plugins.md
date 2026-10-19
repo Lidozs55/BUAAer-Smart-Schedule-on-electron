@@ -17,9 +17,9 @@
 
 硬规则：
 
-- 来源插件 `inject: ['buaaerSchedule', ...]`，核心未激活时 cordis 把来源插件 park 住。
+- 来源插件 `inject: ['scheduleCore', ...]`，核心未激活时 cordis 把来源插件 park 住。
 - 来源插件**不 import 核心包的内部文件**（`host/service.js`、`host/domain.js` 等），也不打开
-  `buaaer_schedule` storage domain。核心也不 import 来源包。
+  `schedule_core` storage domain。核心也不 import 来源包。
 - 卸载来源插件后，已写入的课程/任务/条目与提醒必须原样存在；来源插件只影响"下一次导入"。
 - 一个操作只有一个实现：来源插件的 UI、工具、命令都调核心服务方法。
 
@@ -27,7 +27,7 @@
 
 ## 2. 核心公开面
 
-注入后通过 `ctx.buaaerSchedule` 使用：
+注入后通过 `ctx.scheduleCore` 使用：
 
 | 分组 | 方法 |
 |---|---|
@@ -69,8 +69,6 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
   新的来源插件可以用自己的 id 标记它创建的任务，例如 `createTask({ ..., source: 'jwxt' })`。
 - 不要往 `sourceState` 放日程业务数据；课程/任务/条目一律走核心服务。
 - 不要放密码。SSO 密码只作当次工具/设置调用入参。
-- v1 的 `global.buaaId` / `global.termCode` 只为旧 profile 兼容保留；北航插件激活时通过
-  `legacyGlobal()` 一次性迁入 `sourceState.buaa`，新代码不要读写它们。
 
 ---
 
@@ -82,27 +80,26 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
 | 日历面板、任务页、剪贴板、通用设置 | ✅ | ❌ |
 | 通用条目/任务 Agent 工具 | ✅ | ❌ |
 | 提醒子系统（提前量、`ctx.schedule` 镜像） | ✅ | ❌ |
-| `/api/buaaer-schedule`、本格式 export/import | ✅ | ❌ |
+| `/api/schedule-core`、本格式 export/import | ✅ | ❌ |
 | SSO / 目标网站抓取 / 解析 | ❌ | ✅ |
-| 来源自己的 Agent 工具（如 `buaaer_course_sync`） | ❌ | ✅ |
+| 来源自己的 Agent 工具（如 `buaa_course_sync`） | ❌ | ✅ |
 | 来源设置卡与 `/api/<source>` 通道 | ❌ | ✅ |
-| 来源命令（如 `/buaaer-sync`、`/buaaer-import`） | ❌ | ✅ |
+| 来源命令（如 `/buaa-sync`、`/buaa-import`） | ❌ | ✅ |
 | 来源私有状态（学号/学期码） | 只提供 `sourceState` 容器 | ✅ |
 
 ---
 
 ## 5. 新增一个来源插件（清单）
 
-1. **建包**：`dsh-plugin/dsh-schedule-<source>/`（北航适配器即 `dsh-plugin/buaaer-schedule-buaa/`），
+1. **建包**：`dsh-plugin/dsh-schedule-<source>/`（北航适配器即 `dsh-plugin/dsh-schedule-buaa/`），
    `name: "@lidozs55/dsh-schedule-<source>"`，
    `exports: { ".": "./index.js", "./client": "./client.js" }`，`dsh.bundle.patch` 插入自己的 row。
 2. **Host 入口**：
 
    ```js
-   export const inject = ['buaaerSchedule', 'connection', 'tools']
+   export const inject = ['scheduleCore', 'connection', 'tools']
    export async function apply(ctx) {
-     const service = ctx.buaaerSchedule
-     // 可选：await ensureSourceState(service) 做一次性迁移
+     const service = ctx.scheduleCore
      // 注册自己的 tools / api / commands / systemPrompt（后三者用 ctx.get）
    }
    ```
@@ -110,10 +107,10 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
 3. **写入**：解析外部数据 → 调用 `upsertCourses` / `createTask` / `createEntry`。不要复制一套
    冲突检测或存储实现。
 4. **状态**：学号、token 引用、学期码等放 `sourceState.<source>`；密码/一次性 token 不入库。
-5. **UI**：只注册 `settings.section`（或自己的面板），不要复制日历面板。样式只用 `--dsw-*`
-   token，带自己的清理 effect。
-6. **路由**：用 `ctx.connection.fetch.register` 注册 `/api/buaaer-schedule-<source>`，沿用
-   `{ ok, value } | { ok, error }` wire shape；不要占用核心路由。
+5. **UI**：往核心的 `schedule.settings.blocks` 子槽位注册设置卡（`ctx.slots.inject('schedule.settings.blocks', …)`），
+   不要另开 `settings.section`，也不要复制日历面板。样式复用核心的 `bsch-*` 类（继承 `--dsw-*` token）。
+6. **路由**：用 `ctx.connection.fetch.register` 注册 `/api/<source>-schedule`（北航即
+   `/api/buaa-schedule`），沿用 `{ ok, value } | { ok, error }` wire shape；不要占用核心路由。
 7. **提示词**：用 `systemPrompt.section` 加一小段来源说明，不覆盖核心段。
 8. **验收**：核心卸载时来源插件必须 park；来源卸载时核心数据/提醒不受影响；重启后
    `sourceState` 仍在。
@@ -123,8 +120,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
 ## 6. 反模式
 
 - ❌ 在来源插件里再 `defineDomain` 一份 `courses/tasks/entries`。
-- ❌ 直接 `import '../buaaer-schedule/host/service.js'` 或复制 service 代码。
-- ❌ 让核心知道"北航"（核心只应出现通用概念；v1 两个兼容字段除外）。
+- ❌ 直接 `import '../schedule-core/host/service.js'` 或复制 service 代码。
+- ❌ 让核心知道"北航"（核心只出现通用概念）。
 - ❌ 把来源学号写进核心 `getMeta()/setMeta()` 的公开契约。
 - ❌ 在来源插件里重做提醒、冲突检测、撤销栈。
 - ❌ 把密码写进 `sourceState`、Config、日志或会话命令输入。
@@ -133,9 +130,9 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }
 
 ## 7. 北航适配器作为示例
 
-- `host/state.js`：`sourceState.buaa` + v1 字段迁移。
+- `host/state.js`：`sourceState.buaa`（学号/学期码）。
 - `host/sso.js` / `host/sync.js`：SSO 登录、7 天抓取、考试任务、`ctx.jobs` 作业。
-- `host/tools.js`：`buaaer_course_sync`（Agent 调）。
-- `host/api.js`：`/api/buaaer-schedule-buaa`（设置卡调）。
-- `host/commands.js`：`/buaaer-sync`（缓存会话免密）与 `/buaaer-import`（旧库）。
-- `client.settings.js`：「北航教务导入」设置卡（学号、同步、旧库导入）。
+- `host/tools.js`：`buaa_course_sync`（Agent 调）。
+- `host/api.js`：`/api/buaa-schedule`（设置卡调）。
+- `host/commands.js`：`/buaa-sync`（缓存会话免密）与 `/buaa-import`（旧库）。
+- `client.settings.js`：三张设置卡（学号、同步、旧库导入），注册进核心的 `schedule.settings.blocks`。

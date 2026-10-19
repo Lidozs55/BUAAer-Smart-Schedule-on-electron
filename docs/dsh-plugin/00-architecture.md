@@ -11,9 +11,9 @@
 三个 bundle，依赖方向是单向的：
 
 - **日程核心** `dsh-plugin/dsh-schedule/`（包名 `@lidozs55/dsh-schedule`，row id
-  `buaaer-schedule`）——通用日程数据、服务、工具、UI、提醒。不知道任何学校/导入来源。
-- **北航来源适配器** `dsh-plugin/buaaer-schedule-buaa/`（`@buaaer/dsh-schedule-buaa`，
-  row id `buaaer-schedule-buaa`）——依赖核心注入的 `buaaerSchedule`，只拥有北航 SSO、
+  `schedule-core`）——通用日程数据、服务、工具、UI、提醒。不知道任何学校/导入来源。
+- **北航来源适配器** `dsh-plugin/dsh-schedule-buaa/`（`@buaaer/dsh-schedule-buaa`，
+  row id `buaa-schedule`）——依赖核心注入的 `scheduleCore`，只拥有北航 SSO、
   教务同步、旧库导入与来源状态。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
   见 `09`）——只依赖核心的读面与提醒派生集。
@@ -21,15 +21,15 @@
 ```
 dsh-plugin/dsh-schedule/
 ├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
-├── cordis.patch.yml      # 插入 row buaaer-schedule
+├── cordis.patch.yml      # 插入 row schedule-core
 ├── index.js              # Host 入口：inject 声明 + Config + 装配（见 §4.3）
 ├── host/
-│   ├── domain.js         # storage domain spec（buaaer_schedule，§3）
+│   ├── domain.js         # storage domain spec（schedule_core，§3）
 │   ├── semester.js       # 通用教学周/显示日/课程周次推导（deriveWeekOccurrences）
 │   ├── conflicts.js      # 写入路径的重叠检测
-│   ├── service.js        # 领域服务 buaaerSchedule（唯一业务实现 + sourceState）
-│   ├── tools.js          # 通用 Agent 工具（buaaer_*）
-│   ├── api.js            # /api/buaaer-schedule 客户端数据通道
+│   ├── service.js        # 领域服务 scheduleCore（唯一业务实现 + sourceState）
+│   ├── tools.js          # 通用 Agent 工具（sched_*）
+│   ├── api.js            # /api/schedule-core 客户端数据通道
 │   ├── import.js         # 本插件 export 格式的回灌
 │   └── reminders.js      # 提醒子系统（ctx.schedule 镜像，§4.4）
 ├── client.js             # Client 入口：依赖序装载分块 + 槽位注册（§6.2）
@@ -37,23 +37,23 @@ dsh-plugin/dsh-schedule/
 ```
 
 ```
-dsh-plugin/buaaer-schedule-buaa/
+dsh-plugin/dsh-schedule-buaa/
 ├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
-├── cordis.patch.yml      # 插入 row buaaer-schedule-buaa
-├── index.js              # inject: ['buaaerSchedule', 'connection', 'tools']
+├── cordis.patch.yml      # 插入 row buaa-schedule
+├── index.js              # inject: ['scheduleCore', 'connection', 'tools']
 ├── host/
-│   ├── state.js          # sourceState.buaa（学号/学期码）+ v1 字段一次性迁移
+│   ├── state.js          # sourceState.buaa（学号/学期码）
 │   ├── sso.js / sync.js  # 北航 SSO 抓取 + ctx.jobs 同步作业
-│   ├── tools.js          # buaaer_course_sync
-│   ├── api.js            # /api/buaaer-schedule-buaa（设置页通道）
-│   ├── commands.js       # /buaaer-sync、/buaaer-import
+│   ├── tools.js          # buaa_course_sync
+│   ├── api.js            # /api/buaa-schedule（设置页通道）
+│   ├── commands.js       # /buaa-sync、/buaa-import
 │   ├── legacy-import.js  # 旧 Electron SQLite 导出的映射/去重/对账
 │   └── time.js           # 来源侧日期/学期码规则（不 import 核心内部模块）
-└── client.js / client.settings.js / client.style.js  # 「北航教务导入」设置卡
+└── client.js / client.settings.js  # 往核心的 schedule.settings.blocks 槽里追加设置卡
 ```
 
 数据流铁律：**一个操作只有一个实现**（核心服务方法）。来源插件通过
-`inject: ['buaaerSchedule']` 调同一套方法；UI 写路径（`/api` 路由）与 Agent 工具也调同一方法。
+`inject: ['scheduleCore']` 调同一套方法；UI 写路径（`/api` 路由）与 Agent 工具也调同一方法。
 来源插件不得 import 核心包的内部文件，也不得直接打开核心的 storage domain。核心不 import
 任何来源包。LLM 一律由 DSH 宿主/Agent 侧承担，插件内零 LLM 调用。
 
@@ -73,7 +73,7 @@ dsh-plugin/buaaer-schedule-buaa/
 | R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；移除自主调色体系；条目颜色 = 类别枚举 → token 映射（§3.3，唯一一处常量） |
 | R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js`），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地 v1，见 `09`）：策略/真相在核心，投递表面（会话兜底 + 桌宠气泡）可多个 |
 | R3 | 主面板 = 同一面板内 `日程 \| 任务` 双 tab（窄幅侧栏设计），不搞左右分栏 |
-| R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `buaaer_*` 工具 |
+| R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `sched_*` 工具 |
 | R5 | 自动排期、休息条目、由任务生成条目：**不做**（原实现本就是坏的/恒空的） |
 | R6/R7 | 确定性离线解析（ctx.llm seam）、语音、图片 OCR：**不做** |
 | R8 | 剪贴板队列保留为独立面板；导入 = 队列文本发送到新会话，Agent 调批量工具落库 |
@@ -85,7 +85,7 @@ dsh-plugin/buaaer-schedule-buaa/
 
 ---
 
-## 3. 数据模型（domain `buaaer_schedule`，version 1，zod）
+## 3. 数据模型（domain `schedule_core`，version 1，zod）
 
 时间字段**只有一种语义**：带偏移的 ISO 8601（如 `2026-10-19T08:00:00+08:00`）。
 
@@ -96,25 +96,23 @@ courses: { id, courseName, teacher, classroom,
 
 tasks: { id, title, description|null, taskType /*'homework'|'exam'|'lecture'|'other'*/,
          due /*ISO8601 带时区，必填*/, priority /*'high'|'medium'|'low'*/,
-         completed, entryId /*→entries key|null*/, source /*open id, e.g. 'manual'|'buaa_sync'|'agent'|'import'*/, updatedAt }
+         completed, entryId /*→entries key|null*/, source /*open id, e.g. 'manual'|'source_sync'|'agent'|'import'*/, updatedAt }
 
 entries: { id, title, description|null, category /*§3.3 枚举*/,
            start /*ISO8601 带时区*/, end, allDay?, taskId?, updatedAt }
 
 global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
-          sourceState: {} /*来源 id → JSON 字符串；来源插件私有*/,
-          buaaId: '', termCode: '' /*@deprecated v1 兼容字段，仅由北航插件迁移*/ }
+          sourceState: {} /*来源 id → JSON 字符串；来源插件私有*/ }
 ```
 
 - 三表 key 用 `crypto.randomUUID()`；量级（百级/年）下全表遍历可接受，暂不做前缀 key 优化。
 - global 一律空字符串 = 未设置（`null` 是后端"从未写入"哨兵，global schema 不接受可空）。
 - `sourceState` 是来源插件唯一的状态扩展点：核心只做 JSON 往返，不解释内容；新增来源不需要
-  domain 迁移。`buaaId`/`termCode` 只为旧 profile 能原样打开而保留，核心不再读写，北航插件
-  激活时一次性迁入 `sourceState.buaa`。
+  domain 迁移。
 - 课程同步按去重键 `(courseName, dayOfWeek, startTime, weekRange)` **upsert**，绝不清表重插；
   学期码变化时由 `upsertCourses({ source, termCode })` 清旧规则与例外。
 - 旧库导入属于北航来源插件：`scripts/export-legacy-db.mjs`（node:sqlite；Node 22 需
-  `--experimental-sqlite`）→ `/buaaer-import <json路径>` 或「北航教务导入」设置卡。
+  `--experimental-sqlite`）→ `/buaa-import <json路径>` 或「北航教务导入」设置卡。
 - 通用数据迁移：核心设置卡的「导出 JSON / 导入 JSON」只处理本插件自己的导出格式。
 
 ### 3.3 类别 → token 映射（唯一一处常量，client 半）
@@ -134,10 +132,10 @@ global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
 
 | 问题 | 结论 |
 |---|---|
-| root-scope 页面的写路径 | `ctx.connection.fetch.register()` 在共享 `/api` 前缀上挂精确路由 `/api/buaaer-schedule`（GET snapshot + POST op）。浏览器信任围栏 + cookie 鉴权先于插件 handler，与 Remote RPC 同级可信。裸 `ctx.webServer` 路由**无鉴权**，不承载业务写 |
+| root-scope 页面的写路径 | `ctx.connection.fetch.register()` 在共享 `/api` 前缀上挂精确路由 `/api/schedule-core`（GET snapshot + POST op）。浏览器信任围栏 + cookie 鉴权先于插件 handler，与 Remote RPC 同级可信。裸 `ctx.webServer` 路由**无鉴权**，不承载业务写 |
 | 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
-| 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('buaaerSchedule', service))`；未来桥走 `inject: ['buaaerSchedule']` |
-| 提醒投递 | 镜像进 `ctx.schedule`，投递回绑定 Session（一次性 `sessionController.create({})` 创建，id 存 domain）；记录 title 前缀 `[buaaer:<taskId>]` 供 resync 识别；对外派生集 = `service.upcomingReminders()` |
+| 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；未来桥走 `inject: ['scheduleCore']` |
+| 提醒投递 | 镜像进 `ctx.schedule`，投递回绑定 Session（一次性 `sessionController.create({})` 创建，id 存 domain）；记录 title 前缀 `[sched:<taskId>]` 供 resync 识别；对外派生集 = `service.upcomingReminders()` |
 | 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（课程现算也参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（工具参数/UI 确认框）放行 |
 | "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示；提醒子系统不依赖它 |
 
@@ -156,8 +154,8 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
   "提供者后激活"的监听问题（vendored cordis 的动态插件无 `ctx.inject` 晚绑定动词）。
 - `if (ctx.get(…))` 守卫保留为防御性兜底，不再是主要机制。
 
-**来源适配器** `@buaaer/dsh-schedule-buaa` 声明 `inject = ['buaaerSchedule', 'connection', 'tools']`：
-`buaaerSchedule` 是硬依赖（核心未激活则 cordis park 住来源插件）；`connection`/`tools` 是
+**来源适配器** `@buaaer/dsh-schedule-buaa` 声明 `inject = ['scheduleCore', 'connection', 'tools']`：
+`scheduleCore` 是硬依赖（核心未激活则 cordis park 住来源插件）；`connection`/`tools` 是
 设置页通道与 Agent 工具的硬需求。`commands`/`systemPrompt`/`fs` 用 `ctx.get` 可选读取，
 缺失时只少对应表面，不影响同步与数据写入。
 
@@ -169,18 +167,18 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 ## 5. 接口面（速查）
 
-**领域服务 `buaaerSchedule`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；课程 `listCourses/weekOccurrences(weekStart)/listCourseOverrides/saveCourseOccurrence/resetCourseOccurrence/upsertCourses(rules, {source, termCode})`；元 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；`subscribe(listener)`；`upcomingReminders()`。`legacyGlobal()` 仅用于 v1 字段迁移，新代码禁用。
+**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；课程 `listCourses/weekOccurrences(weekStart)/listCourseOverrides/saveCourseOccurrence/resetCourseOccurrence/upsertCourses(rules, {source, termCode})`；元 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；`subscribe(listener)`；`upcomingReminders()`。
 
-**核心 Agent 工具**（`buaaer_` 前缀，写工具不声明 `isConcurrencySafe`）：`task_list/task_create/task_update/task_complete/task_delete`、`entry_list/entry_create/entry_update/entry_delete/entry_batch_create`。返回 canonical value，人读文本只进 `render`。
+**核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：`task_list/task_create/task_update/task_complete/task_delete`、`entry_list/entry_create/entry_update/entry_delete/entry_batch_create`。返回 canonical value，人读文本只进 `render`。
 
-**核心客户端通道**：`GET /api/buaaer-schedule?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。
+**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。
 
-**北航来源插件**：Agent 工具 `buaaer_course_sync`；命令 `/buaaer-sync`、`/buaaer-import`；
-客户端通道 `GET/POST /api/buaaer-schedule-buaa`（学号/学期码、登录检查、同步、旧库导入）；
+**北航来源插件**：Agent 工具 `buaa_course_sync`；命令 `/buaa-sync`、`/buaa-import`；
+客户端通道 `GET/POST /api/buaa-schedule`（学号/学期码、登录检查、同步、旧库导入）；
 `sourceState.buaa = { buaaId, termCode }`。它不注册日历面板/条目工具。
 
-**systemPrompt 常驻段**：核心段（教学周计算规则、类别语义、`buaaer_*` 工具要点）+ 北航段
-（`buaaer_course_sync`、密码仅当次使用、`/buaaer-sync` 缓存语义）。
+**systemPrompt 常驻段**：核心段（教学周计算规则、类别语义、`sched_*` 工具要点）+ 北航段
+（`buaa_course_sync`、密码仅当次使用、`/buaa-sync` 缓存语义）。
 
 ---
 
@@ -191,7 +189,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 - **宿主共享包只能走 `peerDependencies`**（`@deepseek-ai/*`、`zod`）：树外 `link:` 安装的 bundle 由 `routeLinked` 按 peer 名拦截映射到宿主实例；写进 `dependencies` 激活即 `ERR_MODULE_NOT_FOUND`。
 - **client 半**：apply 里读到的每个 `ctx.*` 服务必须出现在 client 导出的 `inject` 数组——runner 守卫直接拒绝未声明访问（`cannot get property "X" without inject`）。当前声明：`slots/locale/remote/remote.session/uiWorkspace/timer`。
 - **host 半**：见 §4.3。
-- **跨 bundle**：来源插件只通过 `inject` 拿到 `buaaerSchedule` 服务，不 import 核心包的内部
+- **跨 bundle**：来源插件只通过 `inject` 拿到 `scheduleCore` 服务，不 import 核心包的内部
   文件；核心也不 import 来源包。共享的时间/日期纯函数在两侧各自持有（来源侧 `host/time.js`），
   避免把实现细节变成隐式契约。
 
@@ -263,7 +261,7 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 
 - **插件拆分（本轮）**：核心 / 北航来源适配器 / 桌宠桥三个 bundle，依赖方向为
   核心 ← 北航、核心 ← 桥。核心不再包含 SSO、教务同步、旧库导入或 `buaaId`/`termCode`
-  业务逻辑；北航插件通过 `inject: ['buaaerSchedule']` 写入同一服务。
+  业务逻辑；北航插件通过 `inject: ['scheduleCore']` 写入同一服务。
 - **UI 意图对齐返工（`10`）已完成**：P2–P8 在 scratch web 宿主经浏览器自动化逐项验证；P1（设置页
   `inject: share`）随后在**真实桌面宿主**验证通过（应用内设置 → 日程设置卡渲染）。
 - **真实桌面宿主（profile `…\.desktop-build\development\home\profiles\desktop`，`link:` 安装）**：
@@ -275,4 +273,4 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   批量新建、中性色提亮、Windows 风格交互模型（右键建幽灵/双击编辑/框选/Del/整批 undo）。
   注意客户端分块缓存三重坑（`10` §4）：用户侧更新后须重启宿主并强刷页面。
 - 收尾（最终验收后）：删除旧实现目录（`electron/ backend/ frontend/` 与根级旧脚本）、根 README
-  再更新、`/buaaer-import` 命令去留重议。
+  再更新、`/buaa-import` 命令去留重议。

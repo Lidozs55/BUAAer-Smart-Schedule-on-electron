@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
     const { useState, useEffect, useRef, useCallback } = React
     const h = React.createElement
 
-    const API_PATH = '/api/buaaer-schedule'
+    const API_PATH = '/api/schedule-core'
 
     // -- locale ---------------------------------------------------------------
     const zh = {
@@ -52,7 +52,7 @@ window.__ModuleLoader__.load({
       'confirm.ok': '删除', 'confirm.cancel': '取消',
       'conflict.title': '时间冲突', 'conflict.proceed': '仍要保存',
       'clipboard.title': '剪贴板队列', 'clipboard.add': '添加一条', 'clipboard.send': '发送到新会话',
-      'clipboard.hint': '自动收录剪贴板文本；「发送到新会话」会把队列交给 Agent 解析并调用 buaaer 工具落库。',
+      'clipboard.hint': '自动收录剪贴板文本；「发送到新会话」会把队列交给 Agent 解析并调用 sched 工具落库。',
       'clipboard.watching': '正在监听剪贴板（每 5 秒检测一次，重复内容不会重复入队）。',
       'clipboard.up': '上移', 'clipboard.down': '下移', 'clipboard.remove': '移除',
       'clipboard.empty': '队列为空。复制任意文字后会自动出现在这里。',
@@ -111,7 +111,7 @@ window.__ModuleLoader__.load({
       'confirm.ok': 'Delete', 'confirm.cancel': 'Cancel',
       'conflict.title': 'Time conflict', 'conflict.proceed': 'Save anyway',
       'clipboard.title': 'Clipboard queue', 'clipboard.add': 'Add item', 'clipboard.send': 'Send to new session',
-      'clipboard.hint': 'Copying text fills this queue automatically; "Send to new session" hands it to the Agent, which parses it and writes via the buaaer tools.',
+      'clipboard.hint': 'Copying text fills this queue automatically; "Send to new session" hands it to the Agent, which parses it and writes via the sched tools.',
       'clipboard.watching': 'Watching the clipboard (checked every 5s; identical text is queued once).',
       'clipboard.up': 'Move up', 'clipboard.down': 'Move down', 'clipboard.remove': 'Remove',
       'clipboard.empty': 'Queue is empty. Copy any text and it will appear here.',

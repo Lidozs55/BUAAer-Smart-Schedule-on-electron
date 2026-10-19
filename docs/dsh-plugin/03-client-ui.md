@@ -59,14 +59,14 @@ window.__ModuleLoader__.load({
         ctx.effect(() => {
           const el = document.createElement('style');
           el.dataset.plugin = '@lidozs55/dsh-schedule';
-          el.textContent = '.buaaer-calendar { color: var(--dsw-alias-label-primary); }';
+          el.textContent = '.schedule-calendar { color: var(--dsw-alias-label-primary); }';
           document.head.append(el);
           return () => el.remove();
         });
         ctx.slots.inject('main', () => ctx.slots.register(
-          { name: 'main', key: 'buaaer-calendar' }, CalendarPage));
+          { name: 'main', key: 'schedule-calendar' }, CalendarPage));
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
-          { name: 'sidebar.panellist', id: 'buaaer-calendar', order: 100, label: '智能日历' }, CalendarIcon));
+          { name: 'sidebar.panellist', id: 'schedule-calendar', order: 100, label: '智能日历' }, CalendarIcon));
       },
     };
   },
@@ -117,9 +117,10 @@ ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component))
 
 | 槽位 | kind / scope | 用途 | 我们的用法 |
 |---|---|---|---|
-| **`main`** | keyed / **root** | 中央面板，"由 sidebar 条目 id 选中"。**保留 key `conversation` 承载会话；其它 key 没有 Session 绑定** | ★★★ 日历主页面：`{ key: 'buaaer-calendar' }` |
-| **`sidebar.panellist`** | list / **root** | 全局面板图标。**每个 list id 对应同名的 main 面板**；侧栏拥有按钮并从 list 元数据解析标签 | ★★★ 导航入口：`{ id: 'buaaer-calendar', label, order }` |
-| `settings.section` | list / root | 每个条目一个设置页（`id` 是 section key、`order` 位置、`label` 显示文本） | ★★★ 学号/同步/提醒偏好 |
+| **`main`** | keyed / **root** | 中央面板，"由 sidebar 条目 id 选中"。**保留 key `conversation` 承载会话；其它 key 没有 Session 绑定** | ★★★ 日历主页面：`{ key: 'schedule-calendar' }` |
+| **`sidebar.panellist`** | list / **root** | 全局面板图标。**每个 list id 对应同名的 main 面板**；侧栏拥有按钮并从 list 元数据解析标签 | ★★★ 导航入口：`{ id: 'schedule-calendar', label, order }` |
+| `settings.section` | list / root | 每个条目一个设置页（`id` 是 section key、`order` 位置、`label` 显示文本）。**条目可声明子槽位** | ★★★ 「日程设置」整页（核心），内部再开 `schedule.settings.blocks` |
+| `schedule.settings.blocks` | list / root | **本项目自定义**：`settings.section` 条目 `children` 声明的子槽位，核心的设置页在自己两张卡之后 `renderSlot` 它 | ★★★ 北航适配器往里塞学号/同步/旧库导入三张卡 |
 | `settings.general.item` | list / root | General 里的**单个偏好行**（不投影 label，owner 不传 props，文案与写入都由你自己负责） | ★★ 单个开关 |
 | `shell.overlay` | list / root | 全窗口浮层，在每列之上、滚动容器之外；**层本身点击穿透**，条目需自己 opt-in 指针事件 | ★★ 提醒 toast |
 | `conversation.composer.dock` | list / session | 输入框卡片下方的环境条目（无 owner props） | ★ 会话内小挂件 |
@@ -159,6 +160,10 @@ useResource, useWorkspaces, usePanelInfo, useSessions, useSessionStatus, useSess
 - `sidebar.panellist` 的 owner 份额：`{ size: number; active: boolean }`（请求的方形边长 / 是否在中央列被选中）。
 - `settings.section` 的 owner 份额：`{ close: () => void }`（关闭设置面板）。
 - `shell.overlay` 与 `conversation.composer.dock`：**没有 owner 份额**（渲染点传 `{}`）。
+- 注册里声明 `children` 的条目，props 会多出 `renderSlot('<child>', input)`。本项目用它在「日程设置」里开子槽位：
+  核心的 `settings.section` 条目声明 `children: { 'schedule.settings.blocks': { kind: 'list', scope: 'root' } }`，
+  页面里 `renderSlot` 它；北航适配器（或未来任何来源）用 `ctx.slots.inject('schedule.settings.blocks', …)`
+  往里注册卡片——**一个设置页，多来源追加**，不需要各自占一节。
 - `conversation.input.dock` 的 owner 份额：`InputZone = { session: SessionSnapshot; input: InputState }`。
 - 声明了 `locale` 的注册会在 props 上多一个 `t`；声明了 `inject` 会多出对应份额。
 - 选择器钩子要**传选择器**调用，例如 `useSessions(state => state.current)`。**订阅最小的那一片**。
@@ -266,7 +271,7 @@ Host 侧 `ctx.commands.register({ name, description, input, handler })`（见 `0
 ### 5.4 自己开 HTTP 路由：`webServer` 与 `connection.fetch` 是两条不同的路
 
 - `ctx.webServer.register({ kind: 'prefix', path: '/…' })`（见 `02` §2.9）：**无鉴权**（README 原话 "carries no TLS, authentication, or origin policy"），不要承载业务写。
-- **本插件采用的写路径**：`ctx.connection.fetch.register()` 在共享 `/api` 前缀的 Fetch 注册表上挂精确路由（`/api/buaaer-schedule`）。浏览器信任围栏 + 签名 cookie 鉴权**先于**插件 handler（`ConnectionFetchRoute` 文档："Handle one request after the physical carrier has applied its trust and authentication policy"），与 Remote RPC 同级可信。host 侧实现见 `host/api.js`；这就是 root-scope 页面（`main` 非 conversation key）的完整读写通道，手写 bundle 不需要 §5.3 的生成链。
+- **本插件采用的写路径**：`ctx.connection.fetch.register()` 在共享 `/api` 前缀的 Fetch 注册表上挂精确路由（`/api/schedule-core`）。浏览器信任围栏 + 签名 cookie 鉴权**先于**插件 handler（`ConnectionFetchRoute` 文档："Handle one request after the physical carrier has applied its trust and authentication policy"），与 Remote RPC 同级可信。host 侧实现见 `host/api.js`；这就是 root-scope 页面（`main` 非 conversation key）的完整读写通道，手写 bundle 不需要 §5.3 的生成链。
 
 ---
 
@@ -275,13 +280,13 @@ Host 侧 `ctx.commands.register({ name, description, input, handler })`（见 `0
 ```js
 export const inject = ['slots', 'locale']
 
-ctx.effect(() => ctx.locale.register('buaaerCalendar', {
+ctx.effect(() => ctx.locale.register('scheduleCore', {
   zh: { title: '智能日历', sync: '同步课表' },
   en: { title: 'Smart Calendar', sync: 'Sync courses' },
-}), 'buaaer: dictionaries')
+}), 'schedule: dictionaries')
 
 // 注册时声明 locale，组件 props 就会多出 t
-ctx.slots.register({ name: 'main', key: 'buaaer-calendar', locale: 'buaaerCalendar' }, Page)
+ctx.slots.register({ name: 'main', key: 'schedule-calendar', locale: 'scheduleCore' }, Page)
 // Page({ t }) { return t('title') }
 ```
 

@@ -1,10 +1,10 @@
 /**
  * Host half of @lidozs55/dsh-schedule — the generic schedule core.
  *
- * Opens the storage domain, exposes the `buaaerSchedule` service, then wires
+ * Opens the storage domain, exposes the `scheduleCore` service, then wires
  * the generic Agent tools, reminder-mirroring subsystem, prompt section, and
- * client `/api` channel. Calendar sources (BUAA JW, future schools/export
- * formats) are separate bundles that inject `buaaerSchedule` and write
+ * client `/api` channel. Calendar sources (school portals, export formats)
+ * are separate bundles that inject `scheduleCore` and write
  * through this service; they never share the core's storage handle.
  *
  * Every consumed service is declared here — `ctx.get` is only an immediate
@@ -37,12 +37,12 @@ export async function apply(ctx, config) {
   // open() throws loudly on backend/facet/schema mismatch — activation
   // must fail rather than present an empty schedule.
   const domain = await ctx.storageDomain.open(scheduleDomainSpec)
-  ctx.effect(() => () => { void domain.close() }, 'buaaer: domain close')
+  ctx.effect(() => () => { void domain.close() }, 'schedule: domain close')
 
   const service = createScheduleService(ctx, domain)
-  ctx.effect(() => ctx.provide('buaaerSchedule', service), 'buaaer: service')
+  ctx.effect(() => ctx.provide('scheduleCore', service), 'schedule: service')
 
-  ctx.effect(() => registerScheduleTools(ctx, service), 'buaaer: tools')
+  ctx.effect(() => registerScheduleTools(ctx, service), 'schedule: tools')
 
   // Optional reminder mirroring (R2): owns its effect and degrades quietly.
   attachReminders(ctx, service, config)
@@ -50,7 +50,7 @@ export async function apply(ctx, config) {
   const systemPrompt = ctx.get('systemPrompt')
   if (systemPrompt) {
     ctx.effect(() => systemPrompt.section({
-      name: 'buaaer-schedule',
+      name: 'schedule-core',
       order: 1000,
       text: () => {
         const meta = service.getMeta()
@@ -60,13 +60,13 @@ export async function apply(ctx, config) {
           : `本学期第 ${week} 教学周（起点 ${meta.termStart}）`
         return [
           '用户使用日程插件管理课程表、任务截止与日历条目。',
-          `当前为${teachingWeek}。课程按「第 1-16 周」式周期规则存储，查询某周课程用 buaaer_entry_list 的 week_start 现算。`,
-          '修改任务/条目一律走 buaaer_* 工具；时间参数必须是带时区的 ISO 8601（如 2026-10-19T08:00:00+08:00）。',
+          `当前为${teachingWeek}。课程按「第 1-16 周」式周期规则存储，查询某周课程用 sched_entry_list 的 week_start 现算。`,
+          '修改任务/条目一律走 sched_* 工具；时间参数必须是带时区的 ISO 8601（如 2026-10-19T08:00:00+08:00）。',
           '重叠冲突会返回原因，确认覆盖时带 allow_conflicts=true 重试。',
         ].join('\n')
       },
-    }), 'buaaer: prompt section')
+    }), 'schedule: prompt section')
   }
 
-  ctx.effect(() => registerClientApi(ctx, { service }), 'buaaer: client api')
+  ctx.effect(() => registerClientApi(ctx, { service }), 'schedule: client api')
 }

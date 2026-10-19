@@ -89,7 +89,7 @@ export interface ToolRunContext extends ToolExecution {
 ```js
 export function apply(ctx, config) {
   ctx.effect(() => ctx.tools.register({
-    name: 'buaaer_task_create',
+    name: 'sched_task_create',
     description: '在本地日程库中创建一条任务。当用户说到作业、考试、项目截止等需要跟踪的事项时使用。',
     parameters: {
       type: 'object',
@@ -106,7 +106,7 @@ export function apply(ctx, config) {
       render: (args, value) => [{ type: 'text', text: `已创建任务 ${value.id}` }],
     },
     async execute(args, exec) {
-      const service = ctx.get('buaaerSchedule');
+      const service = ctx.get('scheduleCore');
       if (!service) throw new Error('日程服务不可用');
       return service.createTask(args);   // 与 UI 调用同一个方法
     },
@@ -122,7 +122,7 @@ export function apply(ctx, config) {
 
 工具名、描述、参数 schema 会被投影成模型可见的 schema（`ctx.tools.schemas()` 只保留白名单字段，执行与展示回调不会外泄）。因此：
 
-- **名字**：`snake_case`，动词开头，带产品前缀避免与宿主工具撞名（例如 `buaaer_course_sync`、`buaaer_task_create`）。同族操作可以合并成一个工具 + `action` 参数，减少工具数量。
+- **名字**：`snake_case`，动词开头，带产品前缀避免与宿主工具撞名（例如 `buaa_course_sync`、`sched_task_create`）。同族操作可以合并成一个工具 + `action` 参数，减少工具数量。
 - **描述**：写清"做什么 + 什么时候用 + 什么时候不要用"。不要只重复名字。若工具有副作用（写库、改日程、发通知），明确说出来。
 - **参数**：
   - 每个字段都要有 `description`；枚举值用 `enum` 而不是让模型猜字符串。

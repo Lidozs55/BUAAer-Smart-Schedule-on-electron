@@ -45,7 +45,7 @@ function entryInput(args) {
  */
 const TOOLS = [
   {
-    name: 'buaaer_task_list',
+    name: 'sched_task_list',
     method: 'listTasks',
     description: '查询日程库中的任务（作业/考试/其他截止事项）。回答"我这周有什么要交"这类问题用它。',
     parameters: {
@@ -57,7 +57,7 @@ const TOOLS = [
     summarize: value => `共 ${value.count} 条任务`,
   },
   {
-    name: 'buaaer_entry_list',
+    name: 'sched_entry_list',
     method: 'listEntries',
     description: '查询日历条目。from/to 均为带时区 ISO 8601，窗口为左闭右开 [from, to)；省略则返回全部。课程占位用 week_start 现算。',
     parameters: {
@@ -74,7 +74,7 @@ const TOOLS = [
     summarize: value => `${value.count} 条条目、${value.occurrences.length} 个课程出现`,
   },
   {
-    name: 'buaaer_task_create',
+    name: 'sched_task_create',
     method: 'createTask',
     description: '创建一条任务（截止事项）。用户提到作业、考试、报名截止等需要跟踪的事项时使用。',
     parameters: {
@@ -93,9 +93,9 @@ const TOOLS = [
     summarize: value => `已创建任务「${value.title}」（${short(value.due)} 截止）`,
   },
   {
-    name: 'buaaer_task_update',
+    name: 'sched_task_update',
     method: 'updateTask',
-    description: '修改一条任务（标题/描述/截止/优先级/类型）。完成任务请改用 buaaer_task_complete。',
+    description: '修改一条任务（标题/描述/截止/优先级/类型）。完成任务请改用 sched_task_complete。',
     parameters: {
       id: { type: 'string', required: true, description: '任务 id' },
       title: { type: 'string', description: '新标题' },
@@ -108,7 +108,7 @@ const TOOLS = [
     summarize: () => '任务已更新',
   },
   {
-    name: 'buaaer_task_complete',
+    name: 'sched_task_complete',
     method: 'setTaskCompleted',
     description: '把一条任务标记为完成（completed 省略或 true），或撤销完成（false）。',
     parameters: {
@@ -119,7 +119,7 @@ const TOOLS = [
     summarize: (value, args) => `任务已${(args.completed ?? true) ? '' : '取消'}完成`,
   },
   {
-    name: 'buaaer_task_delete',
+    name: 'sched_task_delete',
     method: 'deleteTask',
     description: '删除一条任务（不可恢复；对应提醒会自动撤销）。',
     parameters: { id: { type: 'string', required: true, description: '任务 id' } },
@@ -127,7 +127,7 @@ const TOOLS = [
     summarize: () => '任务已删除',
   },
   {
-    name: 'buaaer_entry_create',
+    name: 'sched_entry_create',
     method: 'createEntry',
     description: '创建一条日历条目（会议、自习、运动等占时事项；课程由同步产生，勿手工建）。与课程或既有条目重叠时返回冲突原因；确认要重叠时传 allow_conflicts=true。',
     parameters: {
@@ -143,7 +143,7 @@ const TOOLS = [
     summarize: value => `已创建条目「${value.title}」（${short(value.start)} 起）`,
   },
   {
-    name: 'buaaer_entry_update',
+    name: 'sched_entry_update',
     method: 'updateEntry',
     description: '修改一条日历条目（改时间即改期，不必删除重建）。',
     parameters: {
@@ -159,7 +159,7 @@ const TOOLS = [
     summarize: () => '条目已更新',
   },
   {
-    name: 'buaaer_entry_delete',
+    name: 'sched_entry_delete',
     method: 'deleteEntry',
     description: '删除一条日历条目（不可恢复）。',
     parameters: { id: { type: 'string', required: true, description: '条目 id' } },
@@ -167,7 +167,7 @@ const TOOLS = [
     summarize: () => '条目已删除',
   },
   {
-    name: 'buaaer_entry_batch_create',
+    name: 'sched_entry_batch_create',
     method: 'batchCreateEntries',
     description: '批量创建日历条目（解析待办/剪贴板内容后的落库入口）。逐条校验、返回逐条成功/失败，单条失败不中断整批。',
     parameters: {

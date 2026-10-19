@@ -2,12 +2,12 @@
  * Client data channel of the BUAA source adapter. It shares the same
  * browser-trust fence as the core's `/api` route but lives on its own path:
  * the source plugin owns only student-id/session state and delegates every
- * schedule write to `buaaerSchedule`.
+ * schedule write to `scheduleCore`.
  */
 import { importLegacyPayload } from './legacy-import.js'
 import { SOURCE_ID, saveSourceState } from './state.js'
 
-const ROUTE_PATH = '/api/buaaer-schedule-buaa'
+const ROUTE_PATH = '/api/buaa-schedule'
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' }
 
 const json = (status, body) => new Response(JSON.stringify(body), {
@@ -59,7 +59,7 @@ function operations(service, deps) {
 export function registerBuaaApi(ctx, deps) {
   const connection = ctx.get('connection')
   if (!connection) {
-    ctx.logger.info('buaaer-buaa: connection seam absent — settings channel disabled (tool still works)')
+    ctx.logger.info('buaa-schedule: connection seam absent — settings channel disabled (tool still works)')
     return () => {}
   }
   const ops = operations(deps.service, deps)
@@ -77,7 +77,7 @@ export function registerBuaaApi(ctx, deps) {
         if (operation === undefined) return fail('unknown_op', `未知操作：${body.op}`)
         return ok(await operation(body))
       } catch (error) {
-        ctx.logger.warn('buaaer-buaa api: %s', error.message)
+        ctx.logger.warn('buaa-schedule api: %s', error.message)
         return fail(error.code ?? 'error', error.message ?? String(error), error.details)
       }
     },

@@ -16,8 +16,8 @@
 | 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(含「已完成」快捷动作)、任务状态信号广播 | 数据副本;提醒策略与时序真相;UI |
 
 时序真相只有一个(`ctx.schedule`,归核心插件);投递表面可以有多个(会话消息兜底,桌宠气泡增强)。
-桌宠关闭、桥卸载、vivarium 整个不存在——提醒仍完整可用。桥 `inject: ['buaaerSchedule', 'vivarium']`,
-任一缺席则 cordis 把桥 park 掉,核心插件无感。来源适配器同理:`inject: ['buaaerSchedule', ...]`,
+桌宠关闭、桥卸载、vivarium 整个不存在——提醒仍完整可用。桥 `inject: ['scheduleCore', 'vivarium']`,
+任一缺席则 cordis 把桥 park 掉,核心插件无感。来源适配器同理:`inject: ['scheduleCore', ...]`,
 卸载北航插件不影响已有课程/任务/条目与提醒。
 
 ## 2. v1 两条联动(已实现)
@@ -28,7 +28,7 @@
 (派生集已含各自提前量——**提前量策略只存核心 Config 一处,桥不自配**)。提醒时刻进入
 `[at−60s, at+60s]` 窗口即 `ctx.vivarium.notices.post`:
 
-- `id = buaaer-rem-<taskId>-<due>`(确定性 id:重复 post 被 broker 以 duplicate-id 拒绝,天然去重);
+- `id = sched-rem-<taskId>-<due>`(确定性 id:重复 post 被 broker 以 duplicate-id 拒绝,天然去重);
 - `actions`:「知道了」(ack) + 「已完成」(complete)——**点已完成直接把任务置 completed**
   (`service.setTaskCompleted`,这是 v1 最有价值的 UX);ack 只是收下气泡,确认 ≠ 完成;
 - `ttlMs = 30min`,过期不重弹,由会话投递兜底;
@@ -39,16 +39,16 @@
 
 ### 2.2 状态信号(喂源语义,host 侧 emit)
 
-- `buaaer.tasks.updated`:`{ pending, overdue, dueToday, next: {title, due}|null }`
+- `sched.tasks.updated`:`{ pending, overdue, dueToday, next: {title, due}|null }`
   ——物种包可据此戴徽标/变担心/庆祝清零;每次 `service.subscribe` 变更 + 每 5 分钟重发;
-- `buaaer.data.changed`:`{ tables }` ——课程/条目/任务写入后的轻量通知(如"课表更新了")。
+- `sched.data.changed`:`{ tables }` ——课程/条目/任务写入后的轻量通知(如"课表更新了")。
 
-信号名用桥自己的 `buaaer.` 前缀(vivarium 契约 §4:喂源必须用包名前缀,保留前缀不可占)。
+信号名用桥自己的 `sched.` 前缀(vivarium 契约 §4:喂源必须用包名前缀,保留前缀不可占)。
 桥不注册 client 喂源描述符——host 侧 `ctx.vivarium.emit` 直达信号枢纽,无需页面侧登记。
 
 ## 3. 接口契约(实现遵守)
 
-- 桥读核心插件:`inject: ['buaaerSchedule']`,只用 `upcomingReminders()` / `listTasks` /
+- 桥读核心插件:`inject: ['scheduleCore']`,只用 `upcomingReminders()` / `listTasks` /
   `setTaskCompleted` / `subscribe`——读为主,唯一写面是气泡上的「已完成」。
 - 桥对 vivarium:只用稳定面 `notices.post/settled`、`emit`、`every`(契约 §1 VivariumHostApi)。
 - 桥不落任何业务数据;去重靠 notice id,计数每次现算。
@@ -57,8 +57,8 @@
 ## 4. 延后项
 
 - **拖拽收纳**(v1 §2.1 设想):等 vivarium 外部拖放目标 API;语义沿用剪贴板页(暂存→交给
-  Agent 调 `buaaer_*` 落库),`source: 'agent'` 不变。
+  Agent 调 `sched_*` 落库),`source: 'agent'` 不变。
 - **课程上课提醒**:核心提醒子系统目前只覆盖任务截止;occurrence 推导型提醒(上课前
   X 分钟,含教室)可在此立项——需要桥或核心对 `weekOccurrences` 做时刻监视,且去重键
   要含日期。核对照录见 `00` §7 延后项。
-- **徽标常驻**:物种包消费 `buaaer.tasks.updated` 即可实现,桥无需改动。
+- **徽标常驻**:物种包消费 `sched.tasks.updated` 即可实现,桥无需改动。
