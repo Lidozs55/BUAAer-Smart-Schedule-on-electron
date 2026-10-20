@@ -13,10 +13,12 @@
  *      live in exactly one place. Because that derived set only contains
  *      FUTURE moments, the poll fires within the ≤60s window before the
  *      moment — at most a minute early, never missed.
- *   2. Status signals — broadcast `sched.tasks.updated` (counts + next
- *      deadline) and `sched.data.changed` so species packs can react
- *      (worry at overdue, celebrate at all-done, badge the next due).
- *      Signal names ride the bridge's own `sched.` prefix (contract §4).
+ *   2. Task state — report pending/overdue/next-deadline FACTS to the base
+ *      (`vivarium.tasks.report`, contract §4c). The BASE derives the pet
+ *      semantics (`tasks.overdue` worry edge, `tasks.clear` celebration), so
+ *      every species reacts by binding base signals — none of them ever
+ *      parses this bridge's payloads (ADR-013). `sched.data.changed` stays
+ *      as a raw observability signal with no pet semantics.
  *
  * Host-only bundle: no client half, no UI, no data copy. Missing vivarium
  * or missing main plugin ⇒ cordis parks this bundle — the main plugin's
@@ -34,7 +36,7 @@ export const Config = Schema.object({
 /** One poll cycle of the reminder watch — also the max earliness of a bubble. */
 const WATCH_LEAD_MS = 60_000
 const NOTICE_TTL_MS = 30 * 60_000
-const SIGNAL_INTERVAL_MS = 5 * 60_000
+const REPORT_INTERVAL_MS = 5 * 60_000
 
 const TYPE_LABELS = { homework: '作业', exam: '考试', lecture: '听课', other: '截止事项' }
 
@@ -92,10 +94,18 @@ export function apply(ctx, config) {
     }
   }
 
-  // -- status signals ---------------------------------------------------------
-  let prevPending = null
-  const emitTasks = () => {
-    if (!config.statusSignals) return
+  // -- task state report -------------------------------------------------------
+  // Facts only (counts + next deadline): pet semantics — the overdue worry
+  // edge and the all-clear celebration — are the BASE's to derive (§4c
+  // tasks.report). This bridge translates its domain into the base
+  // vocabulary once and remembers nothing (the old prevPending/cleared
+  // tracking was base state memory sunk into the wrong layer).
+  const canReportTasks = typeof vivarium.tasks?.report === 'function'
+  if (config.statusSignals && !canReportTasks) {
+    ctx.logger.warn('schedule-bridge: host vivarium lacks tasks.report (contract §4c) — task status reporting disabled')
+  }
+  const reportTasks = () => {
+    if (!config.statusSignals || !canReportTasks) return
     const now = Date.now()
     const today = dayKey(new Date())
     let overdue = 0
@@ -112,20 +122,11 @@ export function apply(ctx, config) {
       else later += 1
       if (next === null || dueMs < Date.parse(next.due)) next = task
     }
-    const pending = overdue + dueToday + later
-    // `cleared` marks the REAL had-tasks → all-done transition, so species
-    // celebrations fire on completion — not on every poll of an empty board.
-    const cleared = prevPending !== null && prevPending > 0 && pending === 0
-    prevPending = pending
-    vivarium.emit({
-      type: 'sched.tasks.updated',
-      payload: {
-        pending,
-        overdue,
-        dueToday,
-        cleared,
-        next: next === null ? null : { title: next.title, due: next.due },
-      },
+    vivarium.tasks.report({
+      pending: overdue + dueToday + later,
+      overdue,
+      dueToday,
+      next: next === null ? null : { title: next.title, due: next.due },
     })
   }
 
@@ -137,16 +138,16 @@ export function apply(ctx, config) {
         ctx.logger.warn('schedule-bridge: reminder watch failed: %s', error.message)
       }
     })
-    const disposeSignal = vivarium.every(SIGNAL_INTERVAL_MS, () => {
+    const disposeReport = vivarium.every(REPORT_INTERVAL_MS, () => {
       try {
-        emitTasks()
+        reportTasks()
       } catch (error) {
-        ctx.logger.warn('schedule-bridge: status signal failed: %s', error.message)
+        ctx.logger.warn('schedule-bridge: task report failed: %s', error.message)
       }
     })
     return () => {
       disposeWatch()
-      disposeSignal()
+      disposeReport()
     }
   }, 'schedule-bridge: timers')
 
@@ -156,15 +157,15 @@ export function apply(ctx, config) {
         if (config.statusSignals) {
           vivarium.emit({ type: 'sched.data.changed', payload: { tables: event.tables } })
         }
-        emitTasks()
+        reportTasks()
       } catch (error) {
-        ctx.logger.warn('schedule-bridge: change signal failed: %s', error.message)
+        ctx.logger.warn('schedule-bridge: change handling failed: %s', error.message)
       }
     })
     return dispose
   }, 'schedule-bridge: subscription')
 
   watchReminders()
-  emitTasks()
+  reportTasks()
   ctx.logger.info('schedule-bridge: schedule ⇄ vivarium bridge active')
 }
