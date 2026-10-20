@@ -93,6 +93,7 @@ export function apply(ctx, config) {
   }
 
   // -- status signals ---------------------------------------------------------
+  let prevPending = null
   const emitTasks = () => {
     if (!config.statusSignals) return
     const now = Date.now()
@@ -111,12 +112,18 @@ export function apply(ctx, config) {
       else later += 1
       if (next === null || dueMs < Date.parse(next.due)) next = task
     }
+    const pending = overdue + dueToday + later
+    // `cleared` marks the REAL had-tasks → all-done transition, so species
+    // celebrations fire on completion — not on every poll of an empty board.
+    const cleared = prevPending !== null && prevPending > 0 && pending === 0
+    prevPending = pending
     vivarium.emit({
       type: 'sched.tasks.updated',
       payload: {
-        pending: overdue + dueToday + later,
+        pending,
         overdue,
         dueToday,
+        cleared,
         next: next === null ? null : { title: next.title, due: next.due },
       },
     })
