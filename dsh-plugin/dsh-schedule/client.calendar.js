@@ -169,7 +169,19 @@ window.__ModuleLoader__.load({
     function ScheduleTab(props) {
       const { t, api, timer, refresh, data, undoApi, weekStart, setWeekStart } = props
       const weekly = useScheduleData(api, timer, weekStart)
-      const snapshot = weekly.data ?? data
+      // Hold the previous week on screen until the target week's snapshot
+      // has landed (user report 2026-10-20): everything below renders ONE
+      // self-consistent `{anchor, rows}` pair — the snapshot carries its
+      // own anchor — so a flip or quick jump never paints the new window
+      // with the old week's rows (they bucket into nothing: a one-frame
+      // blank that reads as a blink on identical consecutive weeks). The
+      // root snapshot joins only when it IS the target week, keeping the
+      // first paint on today instant; any other first visit waits out its
+      // fetch like before. The swap is atomic by construction: the anchor
+      // and the rows travel inside the same snapshot object.
+      const snapshot = weekly.data
+        ?? (data !== null && data.weekStart === weekStart ? data : null)
+      const viewWeek = snapshot?.weekStart ?? weekStart
       const [editor, setEditor] = useState(null)
       const [courseEditor, setCourseEditor] = useState(null)
       const [batch, setBatch] = useState(false)
@@ -268,7 +280,7 @@ window.__ModuleLoader__.load({
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, -7)) }, '‹'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, 7)) }, '›'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(grid.anchorToday()) }, t('toolbar.today')),
-          h(QuickJump, { t, api, weekStart, onJump: day => setWeekStart(day) }),
+          h(QuickJump, { t, api, weekStart: viewWeek, onJump: day => setWeekStart(day) }),
           snapshot?.termWeek != null
             ? h('span', { className: 'bsch-badge' }, `${t('week.prefix')} ${snapshot.termWeek} ${t('week.suffix')}`.trim())
             : h('span', { className: 'bsch-badge' }, t('week.unknown')),
@@ -288,7 +300,7 @@ window.__ModuleLoader__.load({
               h('button', { className: 'bsch-btn', onClick: () => void weekly.refresh() }, t('state.retry')))
           : h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
               h(WeekGrid, {
-                t, timer, weekStart, today: snapshot?.today,
+                t, timer, weekStart: viewWeek, today: snapshot?.today,
                 occurrences: snapshot?.occurrences ?? [],
                 entries: snapshot?.entries ?? [],
                 completedTaskIds: completedIds,

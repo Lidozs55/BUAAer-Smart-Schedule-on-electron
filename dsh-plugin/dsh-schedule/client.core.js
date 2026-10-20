@@ -263,6 +263,13 @@ window.__ModuleLoader__.load({
       const refresh = useCallback(async () => {
         try {
           const snapshot = await api.snapshot(weekRef.current)
+          // A response for an anchor the view has already left must not
+          // take the grid over: rapid flips can land out of order, and the
+          // displayed pair stays self-consistent only if the state tracks
+          // the CURRENT anchor (the view holds the previous snapshot until
+          // this anchor's own fetch lands). The anchor-less root snapshot
+          // always echoes today's anchor and passes.
+          if (weekRef.current != null && snapshot.weekStart !== weekRef.current) return
           setError(null)
           // Dedupe polls by revision — but a week switch re-fetches with an
           // unchanged revision, so the anchor must join the check or the
