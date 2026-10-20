@@ -31,7 +31,8 @@ dsh-plugin/dsh-schedule/
 │   ├── tools.js          # 通用 Agent 工具（sched_*）
 │   ├── api.js            # /api/schedule-core 客户端数据通道
 │   ├── import.js         # 本插件 export 格式的回灌
-│   └── reminders.js      # 提醒子系统（ctx.schedule 镜像，§4.4）
+│   ├── schedule-reminders.js  # 上课/条目提醒时刻派生（纯函数，§4.4）
+│   └── reminders.js      # 提醒子系统（派生集 + ctx.schedule 镜像，§4.4）
 ├── client.js             # Client 入口：依赖序装载分块 + 槽位注册（§6.2）
 └── client.*.js           # 分块：core/gridmath/weekgrid/editors/tasks/calendar/clipboard/settings/style
 ```
@@ -160,7 +161,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 ### 4.4 提醒子系统
 
-`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 开关与作业/考试/其他三档提前量；`service.subscribe()` 驱动 diff 后 create/delete `ctx.schedule` 的 `at` 提醒；任何故障只降级不影响日历主功能。提醒持久状态归 `ctx.schedule`，domain 不镜像"是否已提醒"。
+`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 开关与提前量（任务按作业/考试/其他三档；上课 `classLeadMinutes`；条目 `eventLeadMinutes`，考试类条目走考试档）。派生集 `service.upcomingReminders()` 覆盖三类提醒时刻，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`：任务截止（`host/reminders.js` 内联派生）+ 上课/条目（`host/schedule-reminders.js` 纯函数：`weekOccurrences` 投影 + 8 天条目窗，停课不提醒）。只有**任务**镜像进 `ctx.schedule`（`service.subscribe()` 驱动 diff 后 create/delete `at` 提醒；上课一节一条 agent 提醒是骚扰，气泡即表面）；`remindersEnabled: false` 派生集为空（策略一致性），bundle 缺席只停镜像不停派生；任何故障只降级不影响日历主功能。提醒持久状态归 `ctx.schedule`，domain 不镜像"是否已提醒"。
 
 ---
 
@@ -241,9 +242,9 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 同步成功后自动刷新课表的颜色联动（完成态只改渲染不改数据）。
 
 **延后项**（有真实价值，按需立项）：快速跳转月历 + 重要度色点（表头点击跳锚点已实现）、
-批量日常任务（BatchAddModal，host 侧 `batchCreateEntries` 已就绪）、课程上课提醒
-（提醒子系统目前只覆盖任务截止；需 occurrence 推导，可并入桥插件）、浏览器系统通知
-（ctx.schedule 会话投递已覆盖主路径）。
+批量日常任务（BatchAddModal，host 侧 `batchCreateEntries` 已就绪）、浏览器系统通知
+（ctx.schedule 会话投递已覆盖主路径；课程/条目提醒 2026-10-21 已入提醒子系统派生集，
+桌宠气泡投递，见 §4.4 与 `09`）。
 
 旧实现的已知缺陷清单（时区混存、日期窗口 +1 天、读接口带删除副作用等）在迁移中已全部
 修掉；如需考古看 git 历史里的 `07-migration-map.md`。

@@ -1,7 +1,8 @@
 # 09 · vivarium 桥插件(`@lidozs55/dsh-schedule-bridge`)
 
 > **状态:已立项并落地 v1(2026-10-19)**,位于 `dsh-plugin/dsh-schedule-bridge/`(本仓库,
-> host-only bundle,无 client 半、无 UI)。v1 交付两条联动:提醒气泡 + 任务状态上报。
+> host-only bundle,无 client 半、无 UI)。v1 交付两条联动:提醒气泡(任务截止/上课/日程
+> 条目) + 任务状态上报。
 > 拖拽收纳(文本拖给桌宠→Agent 落库)待 vivarium 基座提供外部拖放目标 API 后立项——
 > 契约 v1(clause §2 interactions.drag)只有宠物自身的 move/throw,无内容拖入面。
 
@@ -24,18 +25,24 @@
 
 ### 2.1 提醒气泡(notice)
 
-核心插件把截止镜像进 `ctx.schedule`(会话投递兜底);桥每 60s 读 `service.upcomingReminders()`
-(派生集已含各自提前量——**提前量策略只存核心 Config 一处,桥不自配**)。提醒时刻进入
-`[at−60s, at+60s]` 窗口即 `ctx.vivarium.notices.post`:
+核心插件派生「提醒时刻」集合,**覆盖三类来源**(2026-10-21 起):任务截止、上课(周课表
+occurrence 投影,停课不提醒)、日程条目(教务导入的考试/会议在这里,不在任务表;考试类
+条目走考试提前量)。**提前量策略只存核心 Config 一处,桥不自配**;上课/条目不镜像
+`ctx.schedule`——一节课一条 agent 提醒是骚扰,桌宠气泡就是恰当表面(会话兜底仅任务享有)。
+桥每 60s 读 `service.upcomingReminders()`(条目带 `kind: 'task'|'class'|'entry'` 与
+确定性 `key`),提醒时刻进入 `[at−60s, at+60s]` 窗口即 `ctx.vivarium.notices.post`:
 
-- `id = sched-rem-<taskId>-<due>`(确定性 id:重复 post 被 broker 以 duplicate-id 拒绝,天然去重);
-- `actions`:「知道了」(ack) + 「已完成」(complete)——**点已完成直接把任务置 completed**
-  (`service.setTaskCompleted`,这是 v1 最有价值的 UX);ack 只是收下气泡,确认 ≠ 完成;
-- `ttlMs = 30min`,过期不重弹,由会话投递兜底;
+- `id = sched-rem-<key>`(key 由核心给出:任务 `<taskId>`、上课 `class-<courseId>@<日期>`
+  ——去重键含日期、条目 `entry-<id>`;重复 post 被 broker 以 duplicate-id 拒绝,天然去重);
+- `kind` 决定文案与动作:**任务**——「知道了」+「已完成」,点已完成直接把任务置 completed
+  (`service.setTaskCompleted`,这是 v1 最有价值的 UX);**上课**——教室随文案,「知道了」;
+  **条目**——类别标签(考试/会议/…;全天条目显示日期+「全天」),「知道了」;
+- `ttlMs = 30min`,过期不重弹(任务由会话投递兜底);
 - 用户点了哪个动作,broker 的 `settled(id)` Promise 就以该 action id 结算。
 
 窗口语义说明:派生集只含未来时刻,一旦过点即从集合消失;60s 提前量 = 至多早一分钟弹出、
-绝不漏发。核心 Config 关闭提醒子系统时派生集为空,气泡同步静默(策略一致性)。
+绝不漏发。核心 Config 关闭提醒时派生集为空,气泡同步静默(策略一致性);「自动化任务」
+bundle 缺席只停会话镜像,派生集照常流动(桌宠气泡从不依赖它)。
 
 ### 2.2 任务状态上报(基座 §4c `tasks.report`,2026-10-21 重构)
 
@@ -63,8 +70,7 @@
 
 - **拖拽收纳**(v1 §2.1 设想):等 vivarium 外部拖放目标 API;语义沿用剪贴板页(暂存→交给
   Agent 调 `sched_*` 落库),`source: 'agent'` 不变。
-- **课程上课提醒**:核心提醒子系统目前只覆盖任务截止;occurrence 推导型提醒(上课前
-  X 分钟,含教室)可在此立项——需要桥或核心对 `weekOccurrences` 做时刻监视,且去重键
-  要含日期。核对照录见 `00` §7 延后项。
 - **徽标常驻**:任务事实已入 vivarium `/vivarium/state` 快照 `tasks` 字段;物种要常驻「下一截止」
   徽标时,由基座把事实追加上信号线(additive)即可,桥无需改动。
+- ~~课程上课提醒~~(2026-10-21 落地):核心提醒子系统派生集已覆盖上课与条目(§2.1),
+  `00` §4.4 / `host/schedule-reminders.js`。

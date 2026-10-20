@@ -1,21 +1,34 @@
 /**
- * Reminder mirroring subsystem (R2): projects task deadlines into
- * `ctx.schedule` one-shot `at` reminders bound to one dedicated delivery
- * session. Everything here is deliberately optional and degrading —
- * `schedule` (the「自动化任务」bundle) and `sessionController` are read with
- * `ctx.get`, and open()/resync failures disable mirroring without ever
- * taking the calendar down.
+ * Reminder subsystem (R2). Two derivations, one policy home:
+ *   - TASK deadlines mirror into `ctx.schedule` one-shot `at` reminders
+ *     bound to one dedicated delivery session (the automation bundle is the
+ *     fallback surface when the pet bubble is missed).
+ *   - SCHEDULE items (recurring classes via weekOccurrences + calendar
+ *     entries — the 教务 import lands exams/meetings as entries) derive
+ *     reminder moments WITHOUT mirroring: one agent prompt per class
+ *     meeting is spam, the pet bubble is the surface (docs 09 §2.1).
+ * Both flow out through `service.upcomingReminders()` — items carry
+ * `kind: 'task' | 'class' | 'entry'` and a deterministic date-scoped
+ * `key` for bridge-side dedup.
  *
- * Bridge seam (dsh-vivarium, docs 09): future bridges consume
- * `service.upcomingReminders()` for their bubble surface. Timing policy
- * (lead minutes) lives here and nowhere else; delivery surfaces are the
- * bridge's concern.
+ * Degradation ladder (each rung narrower than the last):
+ *   - `remindersEnabled: false` → the whole concept is off, derived set is
+ *     EMPTY (docs 09 §2.1 策略一致性).
+ *   - `ctx.schedule`/`sessionController` absent → only MIRRORING (session
+ *     fallback) idles; the derived set keeps flowing — the pet bubble
+ *     surface never needed the automation bundle.
+ *   - domain open()/resync failures disable mirroring, never the calendar.
+ *
+ * Bridge seam (dsh-vivarium, docs 09): timing policy (lead minutes) lives
+ * here and nowhere else; delivery surfaces are the bridge's concern.
  *
  * Reminder identity: schedule record titles start with `[sched:<taskId>]`,
  * which is how resyncs recognize their own records without extra storage.
  */
 import { defineDomain } from '@deepseek-ai/dsh-storage-domain'
 import { z } from 'zod'
+import { today } from './semester.js'
+import { deriveScheduleReminders, ENTRY_WINDOW_MS } from './schedule-reminders.js'
 
 const remindersDomainSpec = defineDomain({
   name: 'sched_reminders',
@@ -49,18 +62,60 @@ const recordAt = record => (record.at !== undefined ? new Date(record.at).getTim
  * @param {object} config - the plugin Config (enabled flag + lead minutes).
  */
 export function attachReminders(ctx, service, config) {
-  const schedule = ctx.get('schedule')
-  const sessionController = ctx.get('sessionController')
   if (!config.remindersEnabled) {
+    service.upcomingReminders = () => []
     ctx.logger.info('sched-reminders: disabled by config')
     return
   }
+
+  // The derived set (lead times applied) — the one face bridges read. It
+  // must EXIST unconditionally (a missing accessor would crash a bridge's
+  // poll) and it deliberately does not require the automation bundle: only
+  // session mirroring below does.
+  const desiredTaskReminders = () => {
+    const now = Date.now()
+    const desired = new Map()
+    for (const task of service.listTasks({ scope: 'all', includeCompleted: false })) {
+      const dueMs = new Date(task.due).getTime()
+      const target = dueMs - leadMinutesFor(config, task.taskType) * 60_000
+      if (!(target > now)) continue
+      desired.set(task.id, {
+        kind: 'task',
+        key: task.id,
+        taskId: task.id,
+        title: `${TITLE_PREFIX}${task.id}] ${task.title}`.slice(0, MAX_TITLE),
+        at: new Date(target).toISOString(),
+        due: task.due,
+        taskType: task.taskType,
+        prompt: `日程提醒：任务「${task.title}」将于 ${task.due} 截止（${task.taskType}）。请提醒用户。`,
+      })
+    }
+    return desired
+  }
+
+  /** Classes + entries: derived fresh each call, never mirrored (docs 09 §2.1). */
+  const desiredScheduleReminders = () => {
+    const nowMs = Date.now()
+    return deriveScheduleReminders({
+      occurrences: service.weekOccurrences(today()),
+      entries: service.listEntries(new Date(nowMs).toISOString(), new Date(nowMs + ENTRY_WINDOW_MS).toISOString()),
+      nowMs,
+      classLeadMinutes: config.classLeadMinutes,
+      examLeadMinutes: config.examLeadMinutes,
+      eventLeadMinutes: config.eventLeadMinutes,
+    })
+  }
+
+  service.upcomingReminders = () => [...desiredTaskReminders().values(), ...desiredScheduleReminders()]
+
+  const schedule = ctx.get('schedule')
+  const sessionController = ctx.get('sessionController')
   if (!schedule) {
-    ctx.logger.info('sched-reminders: ctx.schedule absent (enable「自动化任务」to arm reminders); subsystem idles')
+    ctx.logger.info('sched-reminders: ctx.schedule absent (enable「自动化任务」for session fallback); mirroring idles')
     return
   }
   if (!sessionController) {
-    ctx.logger.info('sched-reminders: sessionController seam absent in this profile; subsystem idles')
+    ctx.logger.info('sched-reminders: sessionController seam absent in this profile; mirroring idles')
     return
   }
 
@@ -75,7 +130,7 @@ export function attachReminders(ctx, service, config) {
           void domain.close()
           return
         }
-        disposeWire = wire(ctx, { service, config, schedule, sessionController, domain })
+        disposeWire = wire(ctx, { service, config, schedule, sessionController, domain, desiredTaskReminders })
       } catch (error) {
         ctx.logger.warn('sched-reminders: mirroring disabled (%s)', error.message)
       }
@@ -87,7 +142,7 @@ export function attachReminders(ctx, service, config) {
   }, 'schedule: reminders')
 }
 
-function wire(ctx, { service, config, schedule, sessionController, domain }) {
+function wire(ctx, { service, config, schedule, sessionController, domain, desiredTaskReminders }) {
   let boundSessionId = domain.global.get().boundSessionId
 
   /** The one session reminders deliver into; created once, then reused. */
@@ -100,35 +155,13 @@ function wire(ctx, { service, config, schedule, sessionController, domain }) {
     return boundSessionId
   }
 
-  const desiredReminders = () => {
-    const now = Date.now()
-    const desired = new Map()
-    for (const task of service.listTasks({ scope: 'all', includeCompleted: false })) {
-      const dueMs = new Date(task.due).getTime()
-      const target = dueMs - leadMinutesFor(config, task.taskType) * 60_000
-      if (!(target > now)) continue
-      desired.set(task.id, {
-        taskId: task.id,
-        title: `${TITLE_PREFIX}${task.id}] ${task.title}`.slice(0, MAX_TITLE),
-        at: new Date(target).toISOString(),
-        due: task.due,
-        taskType: task.taskType,
-        prompt: `日程提醒：任务「${task.title}」将于 ${task.due} 截止（${task.taskType}）。请提醒用户。`,
-      })
-    }
-    return desired
-  }
-
-  // The one derived set (lead times applied) future bridges read.
-  service.upcomingReminders = () => [...desiredReminders().values()]
-
   let resyncing = false
   const resync = async () => {
     if (resyncing) return
     resyncing = true
     try {
       const sessionId = await ensureSession()
-      const desired = desiredReminders()
+      const desired = desiredTaskReminders()
       const records = await schedule.list({ sessionId })
       const seen = new Set()
       for (const record of records) {

@@ -27,10 +27,12 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 /** Reminder kill switch and lead times — the core's only Config. */
 export const Config = Schema.object({
-  remindersEnabled: Schema.boolean().default(true).description('启用截止提醒（需宿主「自动化任务」bundle）'),
+  remindersEnabled: Schema.boolean().default(true).description('启用提醒（关闭后桌宠气泡同步静默；「自动化任务」bundle 只影响会话兜底）'),
   homeworkLeadMinutes: Schema.number().default(30).description('作业类提醒提前分钟数'),
-  examLeadMinutes: Schema.number().default(1440).description('考试类提醒提前分钟数'),
+  examLeadMinutes: Schema.number().default(1440).description('考试类提醒提前分钟数（任务与考试条目同用）'),
   otherLeadMinutes: Schema.number().default(30).description('其他任务提醒提前分钟数'),
+  classLeadMinutes: Schema.number().default(10).description('上课提醒提前分钟数'),
+  eventLeadMinutes: Schema.number().default(15).description('日程条目提醒提前分钟数（考试类条目改用考试提前量）'),
 })
 
 export async function apply(ctx, config) {
