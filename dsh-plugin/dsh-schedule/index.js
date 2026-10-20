@@ -59,10 +59,8 @@ export async function apply(ctx, config) {
           ? '学期起点未配置，教学周未知'
           : `本学期第 ${week} 教学周（起点 ${meta.termStart}）`
         return [
-          '用户使用日程插件管理课程表、任务截止与日历条目。',
-          `当前为${teachingWeek}。课程按「第 1-16 周」式周期规则存储，查询某周课程用 sched_entry_list 的 week_start 现算。`,
-          '修改任务/条目一律走 sched_* 工具；时间参数必须是带时区的 ISO 8601（如 2026-10-19T08:00:00+08:00）。',
-          '重叠冲突会返回原因，确认覆盖时带 allow_conflicts=true 重试。',
+          `日程插件已启用；当前为${teachingWeek}。`,
+          '读写用 sched_task / sched_entry（action 选操作），时间为带时区 ISO 8601；冲突可用 allow_conflicts=true 覆盖。',
         ].join('\n')
       },
     }), 'schedule: prompt section')

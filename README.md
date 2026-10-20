@@ -27,6 +27,9 @@ package.json                       # 仓库元信息（各插件包自带 packag
    `docs/dsh-plugin/11-source-plugins.md` 的契约新增适配器（同样追加到这个设置页）。
 3. 北航课表导入：在「日程设置」填学期起始日期（第一周周一），再到北航卡片填学号与统一认证
    密码点「导入整学期课表」。每学期做一次；密码仅当次使用、不保存。
+4. Agent 细则放在 `.dsh/skills/schedule/SKILL.md`：DSH 会自动发现，日程相关会话按需加载
+   （也可直接输入 `/schedule` 调用）。其他工作区使用时可复制到用户级 skills 目录
+   （`$DSH_HOME/skills/`，默认 `~/.dsh/skills/`）。
 
 ## 文档
 

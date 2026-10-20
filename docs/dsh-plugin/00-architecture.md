@@ -172,7 +172,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 `replaceCourses` 用于**整份快照**（一次拉全时，缺席的规则连同其 per-occurrence 例外一并删除，
 存活的规则保留 id 以便例外继续绑定）。
 
-**核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：`task_list/task_create/task_update/task_complete/task_delete`、`entry_list/entry_create/entry_update/entry_delete/entry_batch_create`。返回 canonical value，人读文本只进 `render`。
+**核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：两个族工具 `sched_task`、`sched_entry`，用 `action` 选操作（task：`list/create/update/complete/delete`；entry：`list/create/update/delete/batch_create`）。2026-10-20 由 10 个单动词工具合并——工具 schema 每轮都进上下文，动词改由 `action` 枚举表达；格式、类别与冲突细则移入 `schedule` skill 按需加载。返回 canonical value，人读文本只进 `render`。
 
 **核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
 
@@ -185,7 +185,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 `sourceState.buaa = { buaaId, termCode }` 仅供显示。它不注册日历面板/条目工具，也没有 `/buaa-sync`
 （密码不能出现在命令输入里）。
 
-**systemPrompt 常驻段**：核心段（教学周计算规则、类别语义、`sched_*` 工具要点）+ 北航段
+**systemPrompt 常驻段**：核心段只保留教学周与工具入口（细则在 `schedule` skill）+ 北航段
 （`buaa_course_sync`、密码仅当次使用、整学期快照语义）。
 
 ---
