@@ -12,7 +12,7 @@
 | 插件 | 拥有 | 不拥有 |
 |---|---|---|
 | 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、`ctx.schedule` 镜像与撤销、投递会话、`upcomingReminders()` 派生集) | 投递表面;桌宠概念;任何学校/导入来源 |
-| 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、教务同步、旧库导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
+| 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、整学期教务导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
 | 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(含「已完成」快捷动作)、任务状态信号广播 | 数据副本;提醒策略与时序真相;UI |
 
 时序真相只有一个(`ctx.schedule`,归核心插件);投递表面可以有多个(会话消息兜底,桌宠气泡增强)。

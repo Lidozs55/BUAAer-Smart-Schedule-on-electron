@@ -152,7 +152,7 @@ update(key: K, fn: (current: V) => V): Promise<V>
 
 | 现有表 | 迁移落点 | 说明 |
 |---|---|---|
-| `user`（单例：`buaa_id`） | domain 的 `global` | 本来就是单例，global 正合适。**不要**搬 `password_hash`（现在是死字段）、`buaa_cookies`（进程内会话即可） |
+| `user`（单例：`buaa_id`） | domain 的 `global.sourceState.buaa` | 来源私有状态容器。**不要**搬 `password_hash`（死字段）或 `buaa_cookies`（会话 jar 不落盘，也不缓存） |
 | `course` | `courses` 表 | key 用稳定 id；保留 `day_of_week` / `week_range`（"第 1-16 周"）语义——这是课程表的本质，不是冗余 |
 | `task` | `tasks` 表 | `deadline` 统一带时区的 ISO 8601（旧库本地时间当 UTC 存的缺陷已修） |
 | `entries` | `entries` 表 | key 建议 `YYYY-MM-DD#<id>` 或 `id` + 一个"按日索引"记录，避免"取一周"退化成全表扫描 |

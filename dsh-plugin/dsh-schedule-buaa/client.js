@@ -20,7 +20,7 @@ window.__ModuleLoader__.load({
         // Declared by the core's `settings.section` entry; `inject` waits
         // until that entry mounts. Styling comes from the core's stylesheet.
         ctx.slots.inject('schedule.settings.blocks', () => ctx.slots.register(
-          { name: 'schedule.settings.blocks', id: 'buaa-import', order: 10, locale: NS },
+          { name: 'schedule.settings.blocks', id: 'buaa-settings', order: 10, locale: NS },
           settings.SettingsSection))
       },
     }

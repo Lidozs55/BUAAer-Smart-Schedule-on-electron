@@ -14,7 +14,7 @@
   `schedule-core`）——通用日程数据、服务、工具、UI、提醒。不知道任何学校/导入来源。
 - **北航来源适配器** `dsh-plugin/dsh-schedule-buaa/`（`@buaaer/dsh-schedule-buaa`，
   row id `buaa-schedule`）——依赖核心注入的 `scheduleCore`，只拥有北航 SSO、
-  教务同步、旧库导入与来源状态。
+  教务同步与来源状态。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
   见 `09`）——只依赖核心的读面与提醒派生集。
 
@@ -42,13 +42,13 @@ dsh-plugin/dsh-schedule-buaa/
 ├── cordis.patch.yml      # 插入 row buaa-schedule
 ├── index.js              # inject: ['scheduleCore', 'connection', 'tools']
 ├── host/
-│   ├── state.js          # sourceState.buaa（学号/学期码）
-│   ├── sso.js / sync.js  # 北航 SSO 抓取 + ctx.jobs 同步作业
+│   ├── state.js          # sourceState.buaa（学号/学期码，仅供显示）
+│   ├── jw.js             # 北航 SSO + 两个整学期端点（课表 / 考试），无会话缓存
+│   ├── parse.js          # 整学期课表 → 课程规则（周次归一化）
+│   ├── sync.js           # 一次同步：登录 → 拉取 → replaceCourses + 考试对账
 │   ├── tools.js          # buaa_course_sync
 │   ├── api.js            # /api/buaa-schedule（设置页通道）
-│   ├── commands.js       # /buaa-sync、/buaa-import
-│   ├── legacy-import.js  # 旧 Electron SQLite 导出的映射/去重/对账
-│   └── time.js           # 来源侧日期/学期码规则（不 import 核心内部模块）
+│   └── time.js           # 来源侧学期码/教学周换算（不 import 核心内部模块）
 └── client.js / client.settings.js  # 往核心的 schedule.settings.blocks 槽里追加设置卡
 ```
 
@@ -109,11 +109,10 @@ global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
 - global 一律空字符串 = 未设置（`null` 是后端"从未写入"哨兵，global schema 不接受可空）。
 - `sourceState` 是来源插件唯一的状态扩展点：核心只做 JSON 往返，不解释内容；新增来源不需要
   domain 迁移。
-- 课程同步按去重键 `(courseName, dayOfWeek, startTime, weekRange)` **upsert**，绝不清表重插；
-  学期码变化时由 `upsertCourses({ source, termCode })` 清旧规则与例外。
-- 旧库导入属于北航来源插件：`scripts/export-legacy-db.mjs`（node:sqlite；Node 22 需
-  `--experimental-sqlite`）→ `/buaa-import <json路径>` 或「北航教务导入」设置卡。
-- 通用数据迁移：核心设置卡的「导出 JSON / 导入 JSON」只处理本插件自己的导出格式。
+- 课程同步按去重键 `(courseName, dayOfWeek, startTime, weekRange)` 写入，绝不清表重插。
+  部分快照走 `upsertCourses`（只增改）；整份快照走 `replaceCourses`（缺席规则连同例外一并删除）。
+- 通用数据迁移：核心设置卡的「导出 JSON / 导入 JSON」只处理本插件自己的导出格式；
+  「清除全部日程数据」一键清空四张数据表（学期起点与 `sourceState` 保留）。
 
 ### 3.3 类别 → token 映射（唯一一处常量，client 半）
 
@@ -156,8 +155,8 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 **来源适配器** `@buaaer/dsh-schedule-buaa` 声明 `inject = ['scheduleCore', 'connection', 'tools']`：
 `scheduleCore` 是硬依赖（核心未激活则 cordis park 住来源插件）；`connection`/`tools` 是
-设置页通道与 Agent 工具的硬需求。`commands`/`systemPrompt`/`fs` 用 `ctx.get` 可选读取，
-缺失时只少对应表面，不影响同步与数据写入。
+设置页通道与 Agent 工具的硬需求。`systemPrompt` 用 `ctx.get` 可选读取，缺失时只少对应表面，
+不影响同步与数据写入。
 
 ### 4.4 提醒子系统
 
@@ -167,18 +166,27 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 ## 5. 接口面（速查）
 
-**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；课程 `listCourses/weekOccurrences(weekStart)/listCourseOverrides/saveCourseOccurrence/resetCourseOccurrence/upsertCourses(rules, {source, termCode})`；元 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；`subscribe(listener)`；`upcomingReminders()`。
+**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；课程 `listCourses/weekOccurrences(weekStart)/listCourseOverrides/saveCourseOccurrence/resetCourseOccurrence/upsertCourses(rules)/replaceCourses(rules, {source, termCode})`；元 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；维护 `clearAllData()`（清空条目/任务/课程规则/例外，设置保留）；`subscribe(listener)`；`upcomingReminders()`。
+
+`upsertCourses` 用于**部分快照**（缺席的规则不删，课程行没有 source 列所以不收来源参数）；
+`replaceCourses` 用于**整份快照**（一次拉全时，缺席的规则连同其 per-occurrence 例外一并删除，
+存活的规则保留 id 以便例外继续绑定）。
 
 **核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：`task_list/task_create/task_update/task_complete/task_delete`、`entry_list/entry_create/entry_update/entry_delete/entry_batch_create`。返回 canonical value，人读文本只进 `render`。
 
-**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。
+**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
 
-**北航来源插件**：Agent 工具 `buaa_course_sync`；命令 `/buaa-sync`、`/buaa-import`；
-客户端通道 `GET/POST /api/buaa-schedule`（学号/学期码、登录检查、同步、旧库导入）；
-`sourceState.buaa = { buaaId, termCode }`。它不注册日历面板/条目工具。
+**北航来源插件**：Agent 工具 `buaa_course_sync`；客户端通道 `GET/POST /api/buaa-schedule`
+（学号、同步）。教务的 `getMyScheduleDetail.do` 一次返回整学期课表且每个格自带星期/时间/周次，
+所以同步没有窗口、没有分页、没有会话缓存：一次登录 + 两个请求（课表、考试），课表按
+`replaceCourses` 整份替换，周次直接取教务给的值，不外推。学期码由用户填的学期起始日期
+（第一周周一，归核心设置页所有）推导，`termCode={Y-1}-{Y}-3` 为 7–8 月的暑期学期。
+设置卡只填学号与密码，不重复学期起点输入。
+`sourceState.buaa = { buaaId, termCode }` 仅供显示。它不注册日历面板/条目工具，也没有 `/buaa-sync`
+（密码不能出现在命令输入里）。
 
 **systemPrompt 常驻段**：核心段（教学周计算规则、类别语义、`sched_*` 工具要点）+ 北航段
-（`buaa_course_sync`、密码仅当次使用、`/buaa-sync` 缓存语义）。
+（`buaa_course_sync`、密码仅当次使用、整学期快照语义）。
 
 ---
 
@@ -212,17 +220,17 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 ---
 
-## 7. 旧实现参照地图与迁移核对结论（2026-10-19 逐条核对完毕）
+## 7. 旧实现迁移结论（2026-10-19 逐条核对完毕，2026-10-20 旧代码已删除）
 
-`electron/`、`backend/`、`frontend/` 是旧 Electron 版源码，**只作意图参照，不再开发**。逐函数
-原子功能枚举（约 330 条）已逐条判定，结论分三类：
+旧 Electron 版源码（`electron/`、`backend/`、`frontend/` 与根级构建脚本）曾作为意图参照，**已于
+2026-10-20 全部移除**，考古请看 git 历史。逐函数原子功能枚举（约 330 条）的判定结论保留如下：
 
 **已迁移（含等价重设计）**：周视图全部交互（拖选/幽灵/拖动/缩放/undo-redo/黑名单/4–28 轴/
 任意锚点窗口/回今天/键盘）、任务筛选/排序/统计/进度环/即将到期条、条目与任务编辑器
 （含删除确认——核对时补上的最后缺口）、冲突检测（内置到全部写路径，替代独立接口）、
-教务同步（SSO 登录、7 天课表、考试、新旧两种解析格式、30 分钟会话缓存、upsert 不清表）、
-提醒镜像（任务截止，含作业/考试/其他三档提前量）、旧库导入（含优先级折叠、entry_id 重映射）、
-剪贴板队列（语义改为"交给 Agent 落库"）、设置页（学号/学期起点/同步/导入导出）。
+教务同步（SSO 登录、整学期课表一次拉取、考试、周次归一化、整份替换）、
+提醒镜像（任务截止，含作业/考试/其他三档提前量）、
+剪贴板队列（语义改为"交给 Agent 落库"）、设置页（学号/学期起点/同步/导入导出/清空）。
 
 **明确不迁移**（依据 §2 R 决策，勿"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与
 手机端、Flask/JWT/静态托管、自有 LLM key 管理与测试连接、`--primary-color` 主题体系与深色
@@ -243,7 +251,8 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 **二轮 subagent 函数级复审的收敛结论（2026-10-19，判定完毕勿重开）**：
 - M1 考试两级提醒（提前 1 天 + 当天）**有意收敛为单档**提前量，Config 可调（R6 决策：DSH
   提醒通道单次投递，两档由 Config 配多任务等价实现）。
-- M6 考试接口的 `jssj`（结束时间）**丢弃**：任务模型无结束时间字段，只取截止。
+- M6 考试接口的**结束时间不进 `due`**：任务模型只认截止时刻，`endTime` 写进备注（`结束：15:20`），
+  不另造字段。
 - M8 教务请求**不带 Referer**：当前实测可用（问题 1 修复后 302 链路通）；若日后教务加校验，
   再按浏览器实测补。
 - M10 旧版 urgency/80–240 分钟折叠算法**随 R1 废弃**（urgency 字段不迁）。
@@ -251,9 +260,18 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 - M12 多设备 Cookie 冲突取 **last-wins**（比旧版的保留策略更符合会话语义）。
 - client 侧：帮助弹窗与「安全与隐私」说明卡**有意不做**（DSH 无对应挂载位，内容并入命令
   hint）；周末表头日期变蓝**忽略**（token 体系无该语义色，日期蓝由 is-today 承担）。
-- 二轮顺手修复：考试同步去重键宽化为去空格「考试」后缀比对；条目默认 taskType=other 兜底；
-  `checkSession`/`clearSyncSession` 会话检查与学号变更清会话；同步抓取窗口起点 `start_day`
-  可参数化；`plausibleTime` 对教务脏时间做 0–23/0–59 钳制。
+- 二轮顺手修复：考试同步去重键宽化为去空格「考试」后缀比对；条目默认 taskType=other 兜底。
+- **考试同步口径（2026-10-20 真实数据校正）**：`exams.do` 实测字段是
+  `courseName/examDate/startTime/endTime/examPlace/examSeatNo`（`examDate` 带 ` 00:00:00` 后缀），
+  早期按旧接口猜的 `kcmc/ksrq/kssj` 全错。更重要的是**同一门课一学期可能有两场考试**（期中 +
+  期末），所以去重键是「课程名 + 考试日期」而非课程名，否则两场会合成一条。删除范围限定为
+  本源创建且日期不早于学期起点，用户手建的同类任务只校正 `due`。
+- **教务同步改版（2026-10-20）**：改用 `getMyScheduleDetail.do?type=term` 一次拉整学期
+  （每格自带星期/时间/周次），因此**取消了**逐日抓取窗口（`start_day`/`days`）、`/buaa-sync`
+  命令、`checkSession`/`clearSyncSession` 与 30 分钟 SSO 会话缓存、`ctx.jobs` 后台作业以及
+  新旧两种解析格式并存——一并删除，不做兼容。教师姓名、学分、课程号等日历不消费的字段在解析时
+  直接丢弃。课程写入改走 `replaceCourses`（整份替换，教务删除的课会消失），学期码由学期起点推导
+  并支持暑期学期 `-3`。学期起点输入只在核心设置页保留一处。
 
 ---
 
@@ -266,11 +284,13 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   `inject: share`）随后在**真实桌面宿主**验证通过（应用内设置 → 日程设置卡渲染）。
 - **真实桌面宿主（profile `…\.desktop-build\development\home\profiles\desktop`，`link:` 安装）**：
   拆分后需重新安装 `@buaaer/dsh-schedule-buaa` 并重启；核心与桥仍为 link 安装。
-- **未验证**（后续按需）：键盘快捷键手感、BUAA 同步 job 全流程（需真实学号密码）、提醒投递与
-  桥气泡的真机触发、旧库导入图形路径、明暗双主题逐页核对。
+- **未验证**（后续按需）：键盘快捷键手感、BUAA 同步全流程（需真实学号密码）、提醒投递与
+  桥气泡的真机触发、明暗双主题逐页核对。
 - **二轮修订（2026-10-19 深夜，`10` §6）**：真机实测 8+3 问题全部修复并在 scratch 宿主逐项
   验证通过——SSO 401、网格对齐、跨列拖、拖后误点击、幽灵、跳转小日历、剪贴板并入 tab、
   批量新建、中性色提亮、Windows 风格交互模型（右键建幽灵/双击编辑/框选/Del/整批 undo）。
   注意客户端分块缓存三重坑（`10` §4）：用户侧更新后须重启宿主并强刷页面。
-- 收尾（最终验收后）：删除旧实现目录（`electron/ backend/ frontend/` 与根级旧脚本）、根 README
-  再更新、`/buaa-import` 命令去留重议。
+- 收尾（2026-10-20 完成）：旧实现目录（`electron/ backend/ frontend/`）与根级旧脚本已全部删除，
+  根 `package.json` 精简为仓库元信息（原 electron-builder/cpolar 配置随旧实现作废）；
+  根 README 已更新。（`/buaa-import` 与 `scripts/export-legacy-db.mjs` 更早已移除，旧库迁移通道关闭。）
+  仓库现在只有 `docs/`、`dsh-plugin/`、`README.md`、`package.json` 四项。

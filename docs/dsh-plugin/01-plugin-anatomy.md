@@ -221,7 +221,7 @@ cordis_inspect_query { platform: "host", provider: "Config",
 
 实际产物在 `dsh-plugin/dsh-schedule/`（Host 入口 + `host/` 模块 + Client 入口 + `client.*.js` 分块），完整代码地图见 `00-architecture.md` §1。本仓库的约定：
 
-- 文档放 `docs/dsh-plugin/`；旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照，验收通过后删除。
+- 文档放 `docs/dsh-plugin/`；旧实现（`electron/`、`backend/`、`frontend/`）已于 2026-10-20 删除，仓库只剩 `docs/` 与 `dsh-plugin/`。
 - bundle 目录名/包名/row id 一旦安装就与 profile 绑定，**改名 = 重新安装**；`@lidozs55/dsh-schedule` / `schedule-core` 已定死（核心与桥原用 `@buaaer/` 前缀，与北航无关，已改为 `@lidozs55/` 并重装过一次）。
 
 ---

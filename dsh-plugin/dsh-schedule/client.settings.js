@@ -8,7 +8,7 @@ window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule/client.settings.js',
   factory: (require) => {
     const core = require('@lidozs55/dsh-schedule/client.core.js')
-    const { React, h, field } = core
+    const { React, h, field, notifyDataChanged, ConfirmDialog } = core
     const { useState, useEffect } = React
 
     /**
@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
       const [meta, setMeta] = useState(null)
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
+      const [confirmClear, setConfirmClear] = useState(false)
 
       useEffect(() => { void load() }, [])
       async function load() {
@@ -36,6 +37,9 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           setMeta(await api.setMeta(patch))
+          // The term anchor reshapes every projected occurrence — pulse the
+          // mounted calendar views instead of letting them wait out the poll.
+          notifyDataChanged()
           setStatus({ ok: true, text: t('settings.saved') })
         } catch (cause) {
           setStatus({ ok: false, text: cause.message })
@@ -62,6 +66,7 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           const counts = await api.importData(JSON.parse(await file.text()))
+          notifyDataChanged()
           setStatus({
             ok: true,
             text: t('settings.imported').replace('{summary}',
@@ -69,6 +74,19 @@ window.__ModuleLoader__.load({
           })
         } catch (cause) {
           setStatus({ ok: false, text: t('settings.importFail').replace('{message}', cause.message) })
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      const clearAll = async () => {
+        setBusy(true)
+        try {
+          const { deleted } = await api.clearAllData()
+          notifyDataChanged()
+          setStatus({ ok: true, text: t('settings.clearedAll').replace('{count}', String(deleted)) })
+        } catch (cause) {
+          setStatus({ ok: false, text: cause.message })
         } finally {
           setBusy(false)
         }
@@ -98,10 +116,23 @@ window.__ModuleLoader__.load({
               h('input', {
                 type: 'file', accept: 'application/json', style: { display: 'none' },
                 onChange: e => void importJson(e),
-              })))),
+              }))),
+          h('div', { className: 'bsch-hint' }, t('settings.clearAllHint')),
+          h('div', { className: 'bsch-rowline' },
+            h('span', { className: 'bsch-spacer' }),
+            h('button', {
+              className: 'bsch-btn is-danger', disabled: busy,
+              onClick: () => setConfirmClear(true),
+            }, t('settings.clearAll')))),
         // Source adapters contribute their own cards underneath the generic
         // ones.
         props.renderSlot('schedule.settings.blocks', {}),
+        confirmClear ? h(ConfirmDialog, {
+          t, title: t('settings.clearAll'), message: t('settings.clearAllHint'),
+          confirmLabel: t('settings.clearAllConfirm'),
+          onCancel: () => setConfirmClear(false),
+          onConfirm: () => { setConfirmClear(false); void clearAll() },
+        }) : null,
         status !== null ? h('div', {
           className: `bsch-hint${status.ok ? '' : ' bsch-error'}`,
         }, status.text) : null)

@@ -54,6 +54,13 @@ function normalizeAllDay(day) {
 const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 
 /**
+ * Course-rule identity: a course that meets the same weekday at the same
+ * time in the same weeks IS the same weekly rule, whatever the room says.
+ */
+const courseKey = rule =>
+  [rule.courseName, rule.dayOfWeek, rule.startTime, rule.weekRange].join('\u0000')
+
+/**
  * One source-supplied weekly rule. Validated here because source plugins
  * persist rules through this service — a malformed row would otherwise only
  * surface at the next domain open.
@@ -164,6 +171,37 @@ export function createScheduleService(ctx, domain) {
   function assertTitle(title) {
     assert(typeof title === 'string' && title.trim() !== '', 'invalid_input', 'title 不能为空')
     return title.trim()
+  }
+
+  /**
+   * Write parsed rules into the table, keyed by rule identity. A rule that
+   * already exists keeps its id (so per-occurrence exceptions stay bound)
+   * and is refreshed when teacher/classroom/endTime moved.
+   * @param {readonly object[]} rules - already-validated-by-caller raw rows.
+   * @param {Map<string, object>} existing - rule key → row, mutated in place.
+   */
+  const writeCourses = async (rules, existing) => {
+    let created = 0
+    let updated = 0
+    for (const raw of rules) {
+      const rule = courseRule(raw)
+      const key = courseKey(rule)
+      const prior = existing.get(key)
+      const stamp = nowIso()
+      if (prior === undefined) {
+        const row = { ...rule, id: randomUUID(), updatedAt: stamp }
+        await courses.put(row.id, row)
+        existing.set(key, row)
+        created += 1
+      } else if (prior.teacher !== rule.teacher || prior.classroom !== rule.classroom
+        || prior.endTime !== rule.endTime) {
+        const row = { ...prior, ...rule, id: prior.id, updatedAt: stamp }
+        await courses.put(prior.id, row)
+        existing.set(key, row)
+        updated += 1
+      }
+    }
+    return { created, updated }
   }
 
   const service = {
@@ -358,6 +396,24 @@ export function createScheduleService(ctx, domain) {
       return { id, deleted: true }
     },
 
+    /**
+     * Destructive reset behind the settings 清除全部日程数据 button: wipe
+     * entries, tasks, course rules, and per-occurrence overrides. Meta
+     * (term anchor) and per-source states survive — they are configuration,
+     * not data. Reminder mirroring reconciles off the change notification
+     * and deletes its now-stale durable records on its own.
+     * @returns {object} `{ deleted }` total row count removed.
+     */
+    async clearAllData() {
+      let deleted = 0
+      for (const row of allEntries()) { await entries.delete(row.id); deleted += 1 }
+      for (const row of allTasks()) { await tasks.delete(row.id); deleted += 1 }
+      for (const row of allCourses()) { await courses.delete(row.id); deleted += 1 }
+      for (const row of allCourseOverrides()) { await courseOverrides.delete(row.id); deleted += 1 }
+      if (deleted > 0) changed(['entries', 'tasks', 'courses', 'course_overrides'])
+      return { deleted }
+    },
+
     // -- courses ------------------------------------------------------------
     listCourses() {
       return allCourses().sort((a, b) =>
@@ -418,67 +474,76 @@ export function createScheduleService(ctx, domain) {
     },
 
     /**
-     * Upsert course rules from a source adapter (calendaring source plugin).
-     * Identity is the rule tuple, so re-syncing never clears the table.
-     * Absent rules are NOT removed: a sync observes one teaching week, so a
-     * rule outside it (e.g. weeks 1-8 while week 10 syncs) would be
-     * indistinguishable from a dropped course. The one safe full clear is a
-     * term boundary: when this source reports a DIFFERENT term code than the
-     * one it last reported, stale rules and their per-occurrence exceptions
-     * are cleared before the upsert.
-     * @param {readonly object[]} rules - parsed course rules from a source.
+     * Upsert course rules without removing any. Identity is the rule tuple,
+     * so re-importing never duplicates. Absent rules are kept: this entry
+     * point accepts PARTIAL rule sets (a JSON import may carry only some
+     * courses).
+     *
+     * A caller holding the COMPLETE set should use `replaceCourses` instead —
+     * that is the only entry point which removes rules, and the only one that
+     * touches per-occurrence exceptions. Course rows carry no source column,
+     * so neither method takes a source id.
+     * @param {readonly object[]} rules - course rules to create or refresh.
+     */
+    async upsertCourses(rules) {
+      assert(Array.isArray(rules), 'invalid_input', '课程规则必须是数组')
+      const existing = new Map(allCourses().map(row => [courseKey(row), row]))
+      const { created, updated } = await writeCourses(rules, existing)
+      if (created + updated > 0) changed(['courses'])
+      return { created, updated, total: rules.length }
+    },
+
+    /**
+     * Replace the whole course table with a source's complete snapshot.
+     * The one timetable an account holds IS a whole-term fact, so a source
+     * that fetched the entire term can state it absolutely: rules the
+     * snapshot no longer contains are dropped together with their
+     * per-occurrence exceptions, and surviving rules keep their ids.
+     * @param {readonly object[]} rules - the complete rule set.
      * @param {object} [options]
-     * @param {string} [options.source] - source id owning the term code.
+     * @param {string} [options.source] - source id whose term code is recorded.
      * @param {string} [options.termCode] - school term the rules belong to.
      */
-    async upsertCourses(rules, { source = 'manual', termCode } = {}) {
+    async replaceCourses(rules, { source, termCode } = {}) {
       assert(Array.isArray(rules), 'invalid_input', '课程规则必须是数组')
-      const state = service.getSourceState(source)
-      const priorTerm = typeof state.termCode === 'string' ? state.termCode : ''
-      const termChanged = termCode !== undefined && priorTerm !== ''
-        && termCode !== priorTerm
-      let cleared = 0
+      const incoming = new Map(
+        rules.map(raw => { const rule = courseRule(raw); return [courseKey(rule), rule] }))
+      const existing = new Map()
+      const dropped = new Set()
+      for (const row of allCourses()) {
+        if (incoming.has(courseKey(row))) existing.set(courseKey(row), row)
+        else dropped.add(row.id)
+      }
+      for (const id of dropped) await courses.delete(id)
+      // Exceptions of dropped rules would otherwise resurrect dead course
+      // ids into the grid; exceptions of surviving rules stay bound.
       let clearedOverrides = 0
-      if (termChanged) {
-        for (const stale of allCourses()) {
-          await courses.delete(stale.id)
-          cleared += 1
-        }
-        // Overrides belong to the old term's rules; keeping them would
-        // resurrect dead course ids into the new term's grid.
-        for (const stale of allCourseOverrides()) {
-          await courseOverrides.delete(stale.id)
+      if (dropped.size > 0) {
+        for (const row of allCourseOverrides()) {
+          if (!dropped.has(row.courseId)) continue
+          await courseOverrides.delete(row.id)
           clearedOverrides += 1
         }
       }
-      if (termCode !== undefined && termCode !== priorTerm) {
-        await service.setSourceState(source, { ...state, termCode })
-      }
-      const keyOf = rule =>
-        [rule.courseName, rule.dayOfWeek, rule.startTime, rule.weekRange].join('\u0000')
-      const existing = new Map(allCourses().map(row => [keyOf(row), row]))
-      let created = 0
-      let updated = 0
-      for (const raw of rules) {
-        const rule = courseRule(raw)
-        const key = keyOf(rule)
-        const prior = existing.get(key)
-        const stamp = nowIso()
-        if (prior === undefined) {
-          const row = { ...rule, id: randomUUID(), updatedAt: stamp }
-          await courses.put(row.id, row)
-          existing.set(key, row)
-          created += 1
-        } else if (prior.teacher !== rule.teacher || prior.classroom !== rule.classroom
-          || prior.endTime !== rule.endTime) {
-          const row = { ...prior, ...rule, id: prior.id, updatedAt: stamp }
-          await courses.put(prior.id, row)
-          existing.set(key, row)
-          updated += 1
+      const { created, updated } = await writeCourses(rules, existing)
+      // Record which term this source now holds. Only write when the caller
+      // stated one AND it differs — an unconditional write would bump the
+      // revision (and repaint every client) on every no-op sync.
+      if (source !== undefined && termCode !== undefined) {
+        const stored = service.getSourceState(source)
+        if (stored.termCode !== termCode) {
+          await service.setSourceState(source, { ...stored, termCode })
+          changed(['global'])
         }
       }
-      if (created + updated + cleared + clearedOverrides > 0) changed(['courses', 'global'])
-      return { created, updated, cleared, total: rules.length }
+      if (created + updated + dropped.size > 0) changed(['courses', 'course_overrides'])
+      return {
+        created,
+        updated,
+        cleared: dropped.size,
+        clearedOverrides,
+        total: rules.length,
+      }
     },
 
     // -- meta & source state -------------------------------------------------

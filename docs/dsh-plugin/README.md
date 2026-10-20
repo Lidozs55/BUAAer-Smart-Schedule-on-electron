@@ -94,7 +94,7 @@ cordis_inspect_query { platform: "client", provider: "Theme",   method: "listTok
 ## 本仓库约定
 
 - 文档语言：中文；**所有标识符、签名、token 名保持英文原样**，不要翻译。
-- 旧实现（`electron/`、`backend/`、`frontend/`）只作意图参照（`00` §7），验收通过后删除。
+- 旧实现（`electron/`、`backend/`、`frontend/`）已于 2026-10-20 删除（迁移结论保留在 `00` §7，代码看 git 历史）。
 - 包名/row id 现已定死：核心 `@lidozs55/dsh-schedule` / `schedule-core`，北航适配器
   `@buaaer/dsh-schedule-buaa` / `buaa-schedule`，桥 `@lidozs55/dsh-schedule-bridge` /
   `schedule-bridge`；改名等于重装（核心与桥原为 `@buaaer/` 前缀，与北航无关，已改到

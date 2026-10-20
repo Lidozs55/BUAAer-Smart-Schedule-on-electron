@@ -53,7 +53,7 @@ export async function importSchedulePayload(service, payload) {
   const courseRows = Array.isArray(payload.courses) ? payload.courses : []
   counts.courses.total = courseRows.length
   if (courseRows.length > 0) {
-    const summary = await service.upsertCourses(courseRows.map(courseOf), { source: 'import' })
+    const summary = await service.upsertCourses(courseRows.map(courseOf))
     counts.courses.created = summary.created
     counts.courses.updated = summary.updated
   }

@@ -1,26 +1,42 @@
 /**
- * BUAA SSO login and JW API access over the host's fetch, with a manual
- * cookie jar (the port of the legacy `requests.Session` flow). Passwords
- * are call-scoped inputs only — they never reach Config, credentials, or
- * the storage domain. SSO jars live in process memory and expire after
- * 30 idle minutes, mirroring the legacy session manager.
+ * BUAA SSO login and JW API access over the host's fetch.
+ *
+ * Credentials are call-scoped: the password is used for this login only and
+ * is never stored. There is deliberately no session cache and no cookie jar
+ * persistence — a timetable is a once-per-term fact, so asking for the
+ * password again next term is cheaper (and safer) than keeping a login
+ * alive that nothing else needs.
  */
 
-const SSO_LOGIN_URL = 'https://sso.buaa.edu.cn/login'
 const API_BASE = 'https://byxt.buaa.edu.cn/jwapp/sys'
-const DETAIL_PATH = '/homeapp/api/home/teachingSchedule/detail.do'
+const HOME_PATH = '/homeapp/home/index.html?contextPath=/jwapp'
+const SCHEDULE_PATH = '/homeapp/api/home/student/getMyScheduleDetail.do'
 const EXAMS_PATH = '/homeapp/api/home/student/exams.do'
 
+/** The JW app page the browser sends as `referrer`; the login URL comes from the 302. */
+const APP_REFERRER = `${API_BASE}${HOME_PATH}`
+
 /**
- * Headers the school side expects; these are its requirements, not ours.
- * Deliberately NO `X-Requested-With`: the JW entry answers XHR probes
- * with 401 but redirects plain navigations to the SSO with 302, and the
- * login flow keys on that 302 (verified 2026-10-19; the legacy
- * `requests.Session` never sent the header either).
+ * What we probe to learn the SSO login URL. It MUST be a protected API, not
+ * `HOME_PATH`: the home page is a static SPA shell that is served to
+ * everyone with HTTP 200, so probing it can never observe the redirect.
+ * Anonymous access to any `api.home.*` endpoint answers 302 to the SSO, which
+ * is the signal the login flow needs (verified 2026-10-20).
  */
-export const schoolHeaders = {
+const LOGIN_PROBE_URL = `${API_BASE}${SCHEDULE_PATH}`
+
+/**
+ * Headers the school side expects (its requirements, not ours). No
+ * `X-Requested-With`: with it the JW API answers an anonymous XHR with 401
+ * instead of redirecting to the SSO with 302, and the login flow keys on that
+ * 302. `fetch-api` is what the JW front end sets on every one of its own
+ * XHRs; omitting it makes some endpoints answer as if the caller were a
+ * browser navigation.
+ */
+const schoolHeaders = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
   'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+  'fetch-api': 'true',
 }
 
 export class BuaaError extends Error {
@@ -31,7 +47,7 @@ export class BuaaError extends Error {
 }
 
 /** Minimal cookie jar over `Set-Cookie` collection. */
-export class CookieJar {
+class CookieJar {
   constructor() {
     this.cookies = new Map()
   }
@@ -61,7 +77,7 @@ async function request(jar, url, options = {}) {
     ...options,
     headers,
     redirect: 'manual',
-    signal: options.signal ?? AbortSignal.timeout(15_000),
+    signal: options.signal ?? AbortSignal.timeout(20_000),
   })
   jar.store(response)
   return response
@@ -80,15 +96,14 @@ function extractExecution(html) {
 }
 
 /**
- * Perform the full SSO dance: trigger the JW redirect, read the login
- * page, post credentials, follow the callback chain, verify the SSO TGC.
- * @returns {CookieJar} the authenticated jar.
+ * Perform the full SSO dance: trigger the JW redirect, read the login page,
+ * post credentials, follow the callback chain, verify the SSO TGC.
+ * @returns {CookieJar} the authenticated jar for this call only.
  */
 export async function ssoLogin(username, password, signal) {
   const jar = new CookieJar()
-  const probeUrl = `${API_BASE}${DETAIL_PATH}?rq=2026-01-01&lxdm=student`
 
-  const probe = await request(jar, probeUrl, { signal })
+  const probe = await request(jar, LOGIN_PROBE_URL, { signal })
   if (probe.status !== 302) {
     throw new BuaaError('auth', `教务入口未按预期重定向（HTTP ${probe.status}）`)
   }
@@ -133,69 +148,57 @@ export async function ssoLogin(username, password, signal) {
   return jar
 }
 
-/** GET a JW API endpoint and normalize `{datas, code}` envelopes. */
-export async function apiGet(jar, url, signal) {
-  let response = await request(jar, url, { signal })
+/**
+ * Call one JW endpoint and unwrap its `{ datas, code, msg }` envelope.
+ * A 302/401 body means the login did not (or no longer) apply.
+ */
+async function jwtCall(jar, url, options, signal) {
+  let response = await request(jar, url, { ...options, signal })
   if (response.status === 302) {
     // One retry: the 302's Set-Cookie may have bound the server session.
-    response = await request(jar, url, { signal })
+    response = await request(jar, url, { ...options, signal })
   }
   if (response.status === 302 || response.status === 401) {
-    // 401 is the XHR-flavored "not logged in" the school also returns.
-    throw new BuaaError('need_login', 'SSO 会话已过期，需要重新登录')
+    throw new BuaaError('auth', '教务登录失效，请重新输入密码同步')
   }
   if (response.status !== 200) {
-    throw new BuaaError('network', `HTTP ${response.status}`)
+    throw new BuaaError('network', `教务接口返回 HTTP ${response.status}`)
   }
   let payload
   try {
     payload = await response.json()
   } catch {
-    throw new BuaaError('data', 'API 响应不是合法 JSON')
+    throw new BuaaError('data', '教务接口响应不是合法 JSON')
   }
   if (payload === null || typeof payload !== 'object' || !('code' in payload)) {
-    throw new BuaaError('data', 'API 返回格式无法识别')
+    throw new BuaaError('data', '教务接口返回格式无法识别')
   }
   if (payload.code !== '0') {
-    throw new BuaaError('data', `教务 API 报错：${payload.msg ?? '未知错误'}`)
+    throw new BuaaError('data', `教务接口报错：${payload.msg ?? '未知错误'}`)
   }
-  return Array.isArray(payload.datas) ? payload.datas : []
-}
-
-export function detailUrl(date) {
-  return `${API_BASE}${DETAIL_PATH}?rq=${date}&lxdm=student`
-}
-
-export function examsUrl(termCode) {
-  return `${API_BASE}${EXAMS_PATH}?termCode=${encodeURIComponent(termCode)}`
+  return payload
 }
 
 /**
- * In-memory SSO jar cache with the school's 30-minute idle expiry.
- * Keyed by student id; one active login per student is enough here.
+ * Fetch the WHOLE term timetable in one request. Unlike the day-by-day
+ * `detail.do` feed, every cell carries its own week information.
+ * `referrer` is a fetch init option, not a header: the Fetch spec lists it
+ * among the forbidden header names, so setting it in `headers` is silently
+ * dropped.
+ * @param {string} termCode - e.g. `2026-2027-1`; `-3` is the summer term.
  */
-export class SsoSessionCache {
-  constructor(idleMs = 30 * 60_000) {
-    this.idleMs = idleMs
-    this.entries = new Map()
-  }
+export function fetchSchedule(jar, termCode, signal) {
+  return jwtCall(jar, `${API_BASE}${SCHEDULE_PATH}`, {
+    method: 'POST',
+    referrer: APP_REFERRER,
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+    body: new URLSearchParams({ termCode, type: 'term' }).toString(),
+  }, signal)
+}
 
-  get(buaaId) {
-    const entry = this.entries.get(buaaId)
-    if (entry === undefined) return undefined
-    if (Date.now() - entry.lastUsed > this.idleMs) {
-      this.entries.delete(buaaId)
-      return undefined
-    }
-    entry.lastUsed = Date.now()
-    return entry.jar
-  }
-
-  set(buaaId, jar) {
-    this.entries.set(buaaId, { jar, lastUsed: Date.now() })
-  }
-
-  clear() {
-    this.entries.clear()
-  }
+/** Fetch the term's exam list (`{ datas: [...] }`). */
+export function fetchExams(jar, termCode, signal) {
+  return jwtCall(jar, `${API_BASE}${EXAMS_PATH}?termCode=${encodeURIComponent(termCode)}`, {
+    referrer: APP_REFERRER,
+  }, signal)
 }

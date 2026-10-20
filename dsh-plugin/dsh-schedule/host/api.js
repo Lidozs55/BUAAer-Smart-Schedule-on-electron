@@ -40,6 +40,7 @@ function operations(service) {
     updateTask: body => service.updateTask(body.id, body.patch),
     setTaskCompleted: body => service.setTaskCompleted(body.id, body.completed),
     deleteTask: body => service.deleteTask(body.id),
+    clearAllData: () => service.clearAllData(),
     setMeta: body => service.setMeta(body.patch),
     /** Full-domain dump — the importable counterpart of the settings export. */
     export: () => ({

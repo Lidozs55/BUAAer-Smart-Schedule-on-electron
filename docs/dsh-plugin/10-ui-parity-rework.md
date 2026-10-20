@@ -15,7 +15,7 @@
 ## 0. 关键路径与验证方式
 
 - 迁移侧代码：`dsh-plugin/dsh-schedule/`（client 半 = `client.js` + `client.*.js` 分块；host 半 = `index.js` + `host/*.js`）
-- 原版参照（意图的唯一事实来源）：
+- 原版参照（意图的唯一事实来源；**旧实现已于 2026-10-20 删除**，以下路径仅存于 git 历史）：
   - `frontend/src/components/CalendarView.vue`（周视图全部交互）
   - `frontend/src/components/TaskSidebar.vue`（任务筛选/排序/进度）
   - `frontend/src/components/EventEditModal.vue` / `BatchAddModal.vue`（编辑器字段）

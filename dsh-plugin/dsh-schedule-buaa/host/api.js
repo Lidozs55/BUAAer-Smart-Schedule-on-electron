@@ -1,11 +1,15 @@
 /**
  * Client data channel of the BUAA source adapter. It shares the same
  * browser-trust fence as the core's `/api` route but lives on its own path:
- * the source plugin owns only student-id/session state and delegates every
- * schedule write to `scheduleCore`.
+ * the source plugin owns only the student id and the sync call, and
+ * delegates every schedule write to `scheduleCore`.
+ *
+ * The term anchor is NOT writable here: the core's settings page already
+ * owns it (it is what projects every course rule onto dates), so this card
+ * only reports which term that anchor currently resolves to.
  */
-import { importLegacyPayload } from './legacy-import.js'
-import { SOURCE_ID, saveSourceState } from './state.js'
+import { SOURCE_ID } from './state.js'
+import { termCodeFor, termLabel } from './time.js'
 
 const ROUTE_PATH = '/api/buaa-schedule'
 const JSON_HEADERS = { 'Content-Type': 'application/json; charset=utf-8' }
@@ -18,38 +22,37 @@ const ok = value => json(200, { ok: true, value })
 const fail = (code, message, details) =>
   json(200, { ok: false, error: { code, message, ...(details ? { details } : {}) } })
 
+const trimId = value => (typeof value === 'string' ? value.trim() : '')
+
+/** What the settings card renders: stored student id, plus the resolved term. */
 const publicState = service => {
   const state = service.getSourceState(SOURCE_ID)
-  return { buaaId: state.buaaId ?? '', termCode: state.termCode ?? '' }
+  const termStart = service.getMeta().termStart
+  const termCode = termStart === '' ? '' : termCodeFor(termStart)
+  return {
+    buaaId: typeof state.buaaId === 'string' ? state.buaaId : '',
+    termStart,
+    termCode,
+    termLabel: termCode === '' ? '' : termLabel(termCode),
+  }
 }
 
 function operations(service, deps) {
   return {
-    setMeta: async body => {
-      const patch = body.patch ?? {}
-      const current = service.getSourceState(SOURCE_ID)
-      const next = { ...current }
-      if (patch.buaaId !== undefined) {
-        if (typeof patch.buaaId !== 'string') {
-          throw Object.assign(new Error('buaaId 必须是字符串'), { code: 'invalid_input' })
-        }
-        next.buaaId = patch.buaaId.trim()
-        // A new student id must not inherit the old id's SSO session.
-        if (next.buaaId !== current.buaaId) deps.clearSyncSession?.()
+    setStudentId: async body => {
+      if (typeof body.buaaId !== 'string') {
+        throw Object.assign(new Error('学号必须是字符串'), { code: 'invalid_input' })
       }
-      await saveSourceState(service, next)
+      await service.setSourceState(SOURCE_ID, {
+        ...service.getSourceState(SOURCE_ID),
+        buaaId: trimId(body.buaaId),
+      })
       return publicState(service)
     },
-    checkSession: () => deps.checkSession(),
-    startSync: async body => {
-      const run = deps.startSync({
-        buaaId: body.buaaId,
-        password: body.password,
-        ...(body.startDay !== undefined ? { startDay: body.startDay } : {}),
-      })
-      return run.inline ? { summary: await run.done } : { jobId: run.jobId }
-    },
-    import: body => importLegacyPayload(service, body.payload),
+    sync: async body => deps.runSync({
+      buaaId: trimId(body.buaaId),
+      password: body.password,
+    }),
   }
 }
 

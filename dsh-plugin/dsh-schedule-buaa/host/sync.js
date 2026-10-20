@@ -1,302 +1,152 @@
 /**
- * One BUAA sync run: SSO login (or cached jar), seven day-by-day course
- * fetches ~0.2s apart, exam listing, then an upsert into the schedule
- * core's service. Runs either inside a `ctx.jobs` job (observable,
- * cancellable) or inline when the jobs seam is unavailable.
+ * One BUAA sync run: SSO login, then two whole-term requests (timetable and
+ * exams), then one snapshot write into the schedule core.
+ *
+ * The timetable request returns the COMPLETE term — every cell carries its
+ * own weekday, times and weeks — so a sync is a full statement of fact, not
+ * a sample: `replaceCourses` makes the fetched rules the whole table, which
+ * also means a course dropped from the JW system disappears here, and no
+ * week range ever needs extrapolating. The only input the school side cannot
+ * supply is which semester the weeks belong to, so the user's term anchor
+ * (`termStart`, the Monday of week 1, owned by the core settings) is what
+ * turns week numbers into dates.
  *
  * The adapter owns only source-specific state (student id, term code) in
- * `scheduleCore.getSourceState('buaa')`; every schedule write goes
- * through the core service.
+ * `scheduleCore.getSourceState('buaa')`; every schedule write goes through
+ * the core service.
  */
-import { apiGet, BuaaError, detailUrl, examsUrl, SsoSessionCache, ssoLogin } from './sso.js'
-import { addDays, dayOfWeek, termCodeFor, today, zonedIso } from './time.js'
+import { BuaaError, fetchExams, fetchSchedule, ssoLogin } from './jw.js'
+import { examKey, parseCourses, parseExams, studentIdOf } from './parse.js'
+import { termCodeFor, termLabel } from './time.js'
 import { SOURCE_ID } from './state.js'
 
-const FETCH_PAUSE_MS = 200
-
-/** Shared across activations of this module generation. */
-const ssoCache = new SsoSessionCache()
-
 /**
- * Parse one day's `detail.do` item list into weekly course rules.
- * New format (`bizName`/`time`/`place`) carries no week info and pins to
- * the default `1-16`; legacy format (`kcmc`/`zcd`/…) keeps its own values.
+ * @param {object} deps - `{ service }`.
+ * @param {object} creds - `{ buaaId?, password, termStart? }`. `password` is
+ *   the SSO password for this call only — never stored. `termStart`
+ *   (`YYYY-MM-DD`, Monday of week 1) lets an agent import without visiting
+ *   the settings page first; it is written to the core meta.
+ * @returns {object} summary for the tool and the settings card.
  */
-export function parseCourseItems(items, date) {
-  const day = dayOfWeek(date)
-  const rules = new Map()
-  for (const item of items) {
-    if (item === null || typeof item !== 'object') continue
-    let rule = null
-    if (typeof item.bizName === 'string' && typeof item.time === 'string') {
-      rule = parseModernItem(item, day)
-    } else if (typeof item.kcmc === 'string') {
-      rule = parseLegacyItem(item, day)
-    }
-    if (rule !== null) rules.set(ruleKey(rule), rule)
+export async function runSync({ service }, creds) {
+  const password = typeof creds.password === 'string' ? creds.password : ''
+  if (password === '') {
+    throw new BuaaError('invalid_input', '缺少统一认证密码（仅当次使用，不保存）')
   }
-  return [...rules.values()]
-}
 
-const ruleKey = rule =>
-  [rule.courseName, rule.dayOfWeek, rule.startTime, rule.weekRange].join('\u0000')
-
-/** The school sometimes returns `99:99`-shaped garbage; legacy skipped it. */
-const plausibleTime = hhmm => {
-  const [h, m] = hhmm.split(':').map(Number)
-  return h >= 0 && h <= 23 && m >= 0 && m <= 59
-}
-
-function parseModernItem(item, dayOfWeek) {
-  let courseName = item.bizName.trim()
-  let teacher = ''
-  const teacherMatch = courseName.match(/\(([^)]+)\)/)
-  if (teacherMatch) {
-    teacher = teacherMatch[1].trim()
-    courseName = courseName.replace(teacherMatch[0], '').trim()
+  if (typeof creds.termStart === 'string' && creds.termStart !== '') {
+    await service.setMeta({ termStart: creds.termStart })
   }
-  const time = item.time.match(/^(\d{1,2}:\d{2})-(\d{1,2}:\d{2})$/)
-  if (!time || !plausibleTime(time[1]) || !plausibleTime(time[2]) || courseName === '') return null
-  return {
-    courseName,
-    teacher: teacher || '未知',
-    classroom: (item.place ?? '').trim(),
-    dayOfWeek,
-    weekRange: '1-16',
-    startTime: pad(time[1]),
-    endTime: pad(time[2]),
+  const termStart = service.getMeta().termStart
+  if (termStart === '') {
+    throw new BuaaError('invalid_input',
+      '缺少学期起始日期（第一周周一）：先在日程设置里填写，课表的周次才能换算成日期')
   }
-}
-
-function parseLegacyItem(item, dayOfWeek) {
-  const day = Number(item.xqj)
-  const start = typeof item.kssj === 'string' && item.kssj.match(/^\d{1,2}:\d{2}$/)
-  const end = typeof item.jssj === 'string' && item.jssj.match(/^\d{1,2}:\d{2}$/)
-  if (!(day >= 1 && day <= 7) || !start || !end || !item.zcd) return null
-  if (!plausibleTime(start[0]) || !plausibleTime(end[0])) return null
-  const classroom = `${item.jxlh ?? ''}${item.jash ?? ''}`.trim()
-  return {
-    courseName: item.kcmc.trim(),
-    teacher: (item.jsxm ?? '').trim() || '未知',
-    classroom,
-    dayOfWeek: day,
-    weekRange: item.zcd.trim(),
-    startTime: pad(item.kssj),
-    endTime: pad(item.jssj),
-  }
-}
-
-const pad = hhmm => {
-  const [h, m] = hhmm.split(':')
-  return `${h.padStart(2, '0')}:${m}`
-}
-
-/** Parse `exams.do` items into exam task drafts. */
-export function parseExamItems(items) {
-  const exams = []
-  for (const item of items) {
-    if (item === null || typeof item !== 'object') continue
-    const name = String(item.kcmc ?? '').trim()
-    const date = String(item.ksrq ?? '').trim()
-    const start = String(item.kssj ?? '').trim()
-    if (name === '' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || !/^\d{1,2}:\d{2}$/.test(start)) continue
-    const [y, m, d] = date.split('-').map(Number)
-    const [hh, mm] = start.split(':').map(Number)
-    const details = [
-      item.ksdd ? `地点：${item.ksdd}` : '',
-      item.ksxz ? `性质：${item.ksxz}` : '',
-      item.khfsmc ? `考核方式：${item.khfsmc}` : '',
-    ].filter(Boolean).join('；')
-    exams.push({
-      title: `${name} 考试`,
-      description: details === '' ? null : details,
-      taskType: 'exam',
-      due: zonedIso(y, m, d, hh, mm),
-      priority: 'high',
-    })
-  }
-  return exams
-}
-
-/**
- * @param {object} deps - `{ service, ctx }`.
- * @param {object} creds - `{ buaaId, password?, startDay? }`; when
- *   `password` is omitted a cached SSO jar is required. `startDay`
- *   (`YYYY-MM-DD`) shifts the 7-day fetch window (legacy sync_buaa/<date>).
- * @param {object} [control] - `{ onProgress(text), signal }` from a job.
- * @returns {object} summary for tools and the settings panel.
- */
-export async function runSync({ service, ctx }, creds, control = {}) {
-  const { onProgress = () => {}, signal } = control
-  const state = service.getSourceState(SOURCE_ID)
-  const buaaId = creds.buaaId || state.buaaId
+  const termCode = termCodeFor(termStart)
+  const buaaId = creds.buaaId || service.getSourceState(SOURCE_ID).buaaId
   if (!buaaId) throw new BuaaError('invalid_input', '缺少学号（先在设置或工具参数里提供）')
 
-  let jar = ssoCache.get(buaaId)
-  if (creds.password) {
-    onProgress('正在登录北航 SSO…')
-    jar = await ssoLogin(buaaId, creds.password, signal)
-    ssoCache.set(buaaId, jar)
-  } else if (!jar) {
-    throw new BuaaError('need_login', '没有可用的 SSO 会话，请提供密码重新登录')
+  const jar = await ssoLogin(buaaId, password)
+
+  const schedule = await fetchSchedule(jar, termCode)
+  const rules = parseCourses(schedule)
+  if (rules.length === 0) {
+    throw new BuaaError('data',
+      `教务返回了 ${termLabel(termCode)} 的课表，但没有任何可解析的课程`
+      + '（学期起始日期是否填成了别的学期？）')
   }
 
-  const startDay = typeof creds.startDay === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(creds.startDay)
-    ? creds.startDay
-    : today()
-  const termCode = termCodeFor(startDay)
-  const rulesByKey = new Map()
-  let daysFetched = 0
-  let daysFailed = 0
+  const courses = await service.replaceCourses(rules, { source: SOURCE_ID, termCode })
+  const exams = await syncExams({ service }, jar, termCode, termStart)
 
-  for (let i = 0; i < 7; i += 1) {
-    if (signal?.aborted) throw new BuaaError('aborted', '同步已取消')
-    const dateStr = addDays(startDay, i)
-    onProgress(`获取课表 ${i + 1}/7（${dateStr}）…`)
-    try {
-      const items = await apiGet(jar, detailUrl(dateStr), signal)
-      for (const rule of parseCourseItems(items, dateStr)) {
-        rulesByKey.set(ruleKey(rule), rule)
-      }
-      daysFetched += 1
-    } catch (error) {
-      if (error.code === 'need_login' || error.code === 'aborted') throw error
-      // One bad day shouldn't sink the whole sync (legacy behavior).
-      daysFailed += 1
-      ctx.logger.warn('buaa sync: day %s failed: %s', dateStr, error.message)
-    }
-    if (i < 6) await pause(FETCH_PAUSE_MS, signal)
+  // `replaceCourses` already recorded `termCode`; only the account is ours
+  // to add, so both values are not written twice.
+  const state = service.getSourceState(SOURCE_ID)
+  const account = studentIdOf(schedule) || buaaId
+  if (account !== state.buaaId) {
+    await service.setSourceState(SOURCE_ID, { ...state, buaaId: account })
   }
-  if (daysFetched === 0) throw new BuaaError('network', '七天课表全部获取失败（网络或会话问题）')
-
-  onProgress('获取考试安排…')
-  const examTasks = []
-  try {
-    examTasks.push(...parseExamItems(await apiGet(jar, examsUrl(termCode), signal)))
-  } catch (error) {
-    if (error.code === 'need_login' || error.code === 'aborted') throw error
-    ctx.logger.warn('buaa sync: exams failed: %s', error.message)
-  }
-
-  onProgress('写入课程规则…')
-  const courseSummary = await service.upsertCourses(
-    [...rulesByKey.values()], { source: SOURCE_ID, termCode })
-
-  let examCreated = 0
-  let examUpdated = 0
-  // Match exam tasks from ANY source (manual, import, earlier syncs) on
-  // the course name: legacy titles were the bare course name, ours carry
-  // a ` 考试` suffix — normalization makes both dedup keys meet.
-  const examKey = title => title.replace(/\s*考试\s*$/, '').trim()
-  const existingByTitle = new Map(service.listTasks({ scope: 'all' })
-    .filter(task => task.taskType === 'exam')
-    .map(task => [examKey(task.title), task]))
-  for (const draft of examTasks) {
-    const existing = existingByTitle.get(examKey(draft.title))
-    if (existing === undefined) {
-      await service.createTask({ ...draft, source: 'buaa_sync' })
-      examCreated += 1
-    } else if (existing.due !== draft.due ||
-        (existing.source === 'buaa_sync' && existing.description !== draft.description)) {
-      // A foreign-source task keeps its own title/priority/notes; sync
-      // only refreshes the schedule facts.
-      await service.updateTask(existing.id, existing.source === 'buaa_sync'
-        ? { ...draft }
-        : { due: draft.due })
-      examUpdated += 1
-    }
-  }
-
-  await service.setSourceState(SOURCE_ID, {
-    ...service.getSourceState(SOURCE_ID),
-    buaaId,
-    termCode,
-  })
 
   return {
-    daysFetched,
-    daysFailed,
     termCode,
-    courses: courseSummary,
-    exams: { created: examCreated, updated: examUpdated, total: examTasks.length },
+    termLabel: termLabel(termCode),
+    termStart,
+    weeksCovered: weeksOf(rules),
+    courses,
+    exams,
   }
 }
 
-function pause(ms, signal) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms)
-    signal?.addEventListener('abort', () => {
-      clearTimeout(timer)
-      reject(new BuaaError('aborted', '同步已取消'))
-    }, { once: true })
-  })
-}
-
-/** Drop every cached SSO jar — the legacy destroy_session counterpart
- *  (wired to student-id changes in the source plugin). */
-export function clearSyncSession() {
-  ssoCache.clear()
-}
-
-/**
- * Lightweight "am I still logged in?" probe (legacy check_login): a live
- * cached jar must survive one `detail.do` call.
- */
-export async function checkSyncSession({ service }) {
-  const buaaId = service.getSourceState(SOURCE_ID).buaaId
-  if (!buaaId) return { ok: false, reason: 'no_id', message: '尚未配置学号' }
-  const jar = ssoCache.get(buaaId)
-  if (!jar) return { ok: false, reason: 'no_session', message: '本进程内没有登录会话（用密码同步一次即可建立）' }
-  try {
-    await apiGet(jar, detailUrl(today()))
-    return { ok: true, message: 'SSO 会话有效' }
-  } catch (error) {
-    if (error.code === 'need_login') return { ok: false, reason: 'expired', message: 'SSO 会话已过期，请用密码重新同步' }
-    return { ok: false, reason: error.code ?? 'error', message: error.message }
+/** Every teaching week the fetched rules touch, ascending. */
+function weeksOf(rules) {
+  const weeks = new Set()
+  for (const rule of rules) {
+    for (const part of String(rule.weekRange).split(',')) {
+      const [from, to] = part.split('-').map(Number)
+      for (let w = from; w <= (to ?? from); w += 1) weeks.add(w)
+    }
   }
+  return [...weeks].sort((a, b) => a - b)
 }
 
 /**
- * Start the sync as a background job when the seam is mounted, else run it
- * inline. The job's own signal — not the caller's — drives cancellation
- * once the id is published (tool-runbook requirement).
+ * Reconcile the term's exam list against the stored exam tasks.
+ *
+ * Identity is (course name, exam date), never the name alone: one course can
+ * sit a mid-term and a final in the same term, and a name-only key would
+ * silently merge them. Matching spans ALL sources, so a task the user added
+ * by hand for the same exam is reused instead of duplicated; a task we own is
+ * refreshed in full, a foreign one only has its `due` corrected (its title,
+ * priority and notes are the user's).
+ *
+ * Deletion is deliberately narrow: only tasks this source created, and only
+ * within the term being synced (not dated before the term anchor) — a
+ * cancelled or moved exam disappears, but a previous term's exam history is
+ * never touched.
  */
-export function startSyncJob(deps, creds) {
-  const jobs = deps.ctx.get('jobs')
-  if (!jobs) {
-    return { inline: true, done: runSync(deps, creds) }
-  }
-  const controller = new AbortController()
-  let settle
-  const done = new Promise((resolve, reject) => { settle = { resolve, reject } })
+async function syncExams({ service }, jar, termCode, termStart) {
+  let drafts
   try {
-    const id = jobs.start({
-      kind: 'buaa-sync',
-      label: `北航课表同步（${creds.buaaId || deps.service.getSourceState(SOURCE_ID).buaaId || '使用已存学号'}）`,
-      run(job) {
-        runSync(deps, creds, { onProgress: line => job.updateProgress(line), signal: controller.signal })
-          .then(summary => {
-            job.append(`完成：${summary.daysFetched}/7 天，课程 ${summary.courses.total} 条，考试 ${summary.exams.total} 条\n`)
-            settle.resolve(summary)
-            return { status: 'completed', result: JSON.stringify(summary) }
-          })
-          .catch(error => {
-            settle.reject(error)
-            const failed = error.code === 'aborted'
-            job.append(`${failed ? '已取消' : '失败'}：${error.message}\n`)
-            return { status: failed ? 'killed' : 'failed', detail: error.message }
-          })
-        return {
-          cancel: reason => controller.abort(new BuaaError('aborted', reason || '用户取消')),
-          done,
-        }
-      },
-    })
-    return { inline: false, jobId: id, done }
+    drafts = parseExams((await fetchExams(jar, termCode)).datas)
   } catch (error) {
-    // A profile without a mounted job controller rejects start(); degrade
-    // to an inline run rather than failing the sync itself.
-    deps.ctx.logger.warn('buaa sync: jobs.start unavailable (%s), running inline', error.message)
-    return { inline: true, done: runSync(deps, creds) }
+    // Exams are a bonus: a broken exam feed must not sink a good timetable.
+    if (error.code === 'auth') throw error
+    return { created: 0, updated: 0, removed: 0, total: 0, failed: error.message }
   }
+
+  const dayOf = task => String(task.due ?? '').slice(0, 10)
+  const taskKey = task => `${examKey(task.title)}\u0000${dayOf(task)}`
+  const existingByKey = new Map(service.listTasks({ scope: 'all' })
+    .filter(task => task.taskType === 'exam')
+    .map(task => [taskKey(task), task]))
+
+  let created = 0
+  let updated = 0
+  for (const draft of drafts) {
+    const { key, ...fields } = draft
+    const existing = existingByKey.get(key)
+    if (existing === undefined) {
+      await service.createTask({ ...fields, source: SOURCE_ID })
+      created += 1
+      continue
+    }
+    existingByKey.delete(key)
+    const owned = existing.source === SOURCE_ID
+    const stale = existing.due !== fields.due
+      || (owned && (existing.description !== fields.description
+        || existing.priority !== fields.priority
+        || existing.taskType !== fields.taskType))
+    if (!stale) continue
+    await service.updateTask(existing.id, owned ? { ...fields } : { due: fields.due })
+    updated += 1
+  }
+
+  let removed = 0
+  for (const leftover of existingByKey.values()) {
+    if (leftover.source !== SOURCE_ID) continue
+    if (dayOf(leftover) < termStart) continue
+    await service.deleteTask(leftover.id)
+    removed += 1
+  }
+  return { created, updated, removed, total: drafts.length }
 }

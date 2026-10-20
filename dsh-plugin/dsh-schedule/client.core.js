@@ -65,6 +65,9 @@ window.__ModuleLoader__.load({
       'settings.saved': '已保存',
       'settings.dataTitle': '数据', 'settings.export': '导出 JSON', 'settings.import': '导入 JSON',
       'settings.imported': '导入完成：{summary}', 'settings.importFail': '导入失败：{message}',
+      'settings.clearAll': '清除全部日程数据',
+      'settings.clearAllHint': '删除全部条目、任务、课程规则与课程例外，不可撤销；学期起点与学号等设置保留。建议先导出备份。',
+      'settings.clearAllConfirm': '清空', 'settings.clearedAll': '已清除 {count} 条日程数据',
       'state.error': '出错了：{message}', 'state.loading': '加载中…', 'state.retry': '重试',
       'cat.course': '课程', 'cat.homework': '作业', 'cat.exam': '考试', 'cat.meeting': '会议',
       'cat.study': '自习', 'cat.sports': '运动', 'cat.other': '其他',
@@ -124,6 +127,9 @@ window.__ModuleLoader__.load({
       'settings.saved': 'Saved',
       'settings.dataTitle': 'Data', 'settings.export': 'Export JSON', 'settings.import': 'Import JSON',
       'settings.imported': 'Import done: {summary}', 'settings.importFail': 'Import failed: {message}',
+      'settings.clearAll': 'Clear all schedule data',
+      'settings.clearAllHint': 'Deletes every entry, task, course rule, and course exception. This cannot be undone; the term anchor and student id are kept. Export a backup first.',
+      'settings.clearAllConfirm': 'Clear', 'settings.clearedAll': 'Cleared {count} rows',
       'state.error': 'Error: {message}', 'state.loading': 'Loading…', 'state.retry': 'Retry',
       'cat.course': 'Course', 'cat.homework': 'Homework', 'cat.exam': 'Exam', 'cat.meeting': 'Meeting',
       'cat.study': 'Study', 'cat.sports': 'Sports', 'cat.other': 'Other',
@@ -227,12 +233,27 @@ window.__ModuleLoader__.load({
         setMeta: patch => post('setMeta', { patch }),
         exportData: () => post('export', {}),
         importData: payload => post('import', { payload }),
+        clearAllData: () => post('clearAllData', {}),
       }
     }
 
+    // -- cross-surface data pulse ----------------------------------------------
+    // No push channel exists for plugin data (D-1), so a surface that
+    // finishes a bulk write outside the calendar panel (a settings import
+    // card, a source adapter's sync) pulses this same-window event; every
+    // mounted useScheduleData refreshes immediately instead of waiting out
+    // the 20-second revision poll. Unmounted panels need nothing — their
+    // mount effect fetches fresh data anyway. Source adapters dispatch the
+    // literal event name; this kernel owns the contract.
+    const DATA_CHANGED_EVENT = 'schedule:data-changed'
+    const notifyDataChanged = () => {
+      window.dispatchEvent(new CustomEvent(DATA_CHANGED_EVENT))
+    }
+
     // -- hooks ------------------------------------------------------------------
-    /** Load the weekly snapshot, refresh on week change, mutation, and a
-     *  20-second revision poll (no push channel exists for plugin data). */
+    /** Load the weekly snapshot, refresh on week change, mutation, the
+     *  `schedule:data-changed` pulse, and a 20-second revision poll (no push
+     *  channel exists for plugin data). */
     function useScheduleData(api, timer, weekStart) {
       const [data, setData] = useState(null)
       const [error, setError] = useState(null)
@@ -243,13 +264,25 @@ window.__ModuleLoader__.load({
         try {
           const snapshot = await api.snapshot(weekRef.current)
           setError(null)
-          setData(prev => (prev !== null && prev.revision === snapshot.revision ? prev : snapshot))
+          // Dedupe polls by revision — but a week switch re-fetches with an
+          // unchanged revision, so the anchor must join the check or the
+          // old week's rows would render against the new week's grid.
+          setData(prev => (prev !== null
+            && prev.revision === snapshot.revision
+            && prev.weekStart === snapshot.weekStart
+            ? prev
+            : snapshot))
         } catch (cause) {
           setError(cause.message ?? String(cause))
         }
       }, [api])
 
       useEffect(() => { void refresh() }, [refresh, weekStart])
+      useEffect(() => {
+        const onDataChanged = () => { void refresh() }
+        window.addEventListener(DATA_CHANGED_EVENT, onDataChanged)
+        return () => window.removeEventListener(DATA_CHANGED_EVENT, onDataChanged)
+      }, [refresh])
       useEffect(() => {
         if (!timer) return undefined
         return timer.interval(() => { void refresh() }, 20_000)
@@ -344,7 +377,7 @@ window.__ModuleLoader__.load({
       React, h, useState, useEffect, useRef, useCallback,
       zh, en, CATEGORY_TOKEN,
       pad2, dateKey, dateToZonedIso, addDays, zonedAt,
-      createApi, ApiError, useScheduleData, useUndo,
+      createApi, ApiError, useScheduleData, useUndo, notifyDataChanged,
       Modal, ConfirmDialog, field,
     }
   },
