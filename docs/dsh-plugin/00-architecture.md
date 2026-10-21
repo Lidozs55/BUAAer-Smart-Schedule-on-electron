@@ -50,7 +50,7 @@ dsh-plugin/dsh-schedule-buaa/
 ├── host/
 │   ├── state.js          # sourceState.buaa（学号/学期码，仅供显示）
 │   ├── jw.js             # 北航 SSO + 两个整学期端点（课表 / 考试），无会话缓存
-│   ├── parse.js          # 整学期课表 → 按实际周次生成带日期的学习条目
+│   ├── parse.js          # 整学期课表 → 按实际周次生成带日期的课程条目
 │   ├── sync.js           # 一次同步：登录 → 拉取 → replaceSourceEntries + 考试任务对账
 │   ├── tools.js          # buaa_course_sync
 │   ├── api.js            # /api/buaa-schedule（设置页通道）
@@ -93,7 +93,7 @@ dsh-plugin/dsh-schedule-gacha/
 
 | # | 决策 |
 |---|---|
-| R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；移除自主调色体系；条目颜色 = 类别枚举 → token 映射（§3.3，唯一一处常量） |
+| R1 | UI 全面贴近 DSH：shell 样式只用 `--dsw-*` token；类别块允许使用用户配置的鲜明 `#RRGGBB` accent，其余颜色仍走 token（§3.3） |
 | R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js` 派生 + `client.notify.js` 轮询通知），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地设计 v2，见 `09`）：策略/真相在核心，投递表面（页面通知/Web Notification + 桌宠气泡）可多个，均不经过 Agent 会话 |
 | R3 | 主面板 = 同一面板内 `日程 \| 任务 \| 剪贴板` 三 tab（窄幅侧栏设计），不搞左右分栏 |
 | R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `sched_*` 工具 |
@@ -104,7 +104,7 @@ dsh-plugin/dsh-schedule-gacha/
 | R10 | 大组件按职能拆分重写（单组件 ≤300 行），不整体搬运 Vue 代码 |
 | R11 | 模型选择/key/限流均不进插件 |
 
-**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目任意 hex 颜色、`Task.urgency`、只物化未来 7 天的截断导入。旧 README 声称的四象限视图、SPOC 同步、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴。
+**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目逐条任意 hex 颜色（类别配色不在此限制内）、`Task.urgency`、只物化未来 7 天的截断导入。旧 README 声称的四象限视图、SPOC 同步、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴。
 
 ---
 
@@ -123,7 +123,8 @@ tasks: { id, title, description: string|null,
          source, updatedAt }
 global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
           sourceState: {} /*来源 id → JSON 字符串*/,
-          entryModelVersion: 2 }
+          entryModelVersion: 2, categoryModelVersion: 1,
+           categories: [{ id, name, color: '#RRGGBB' }] }
 ```
 
 - 所有日历块都是普通条目；导入与手建使用同一 CRUD、冲突检测、详情和提醒路径。
@@ -131,17 +132,27 @@ global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
 - `source` / `sourceKey` 只记录归属与稳定身份，不派生另一种 UI 类型。完整来源快照的写法见 `11` §2。
 - 新建 ID 通常由 `crypto.randomUUID()` 生成；来源更新按稳定键保留既有 ID。当前量级允许全表遍历。
 - `sourceState` 是来源私有状态容器；核心只做 JSON 往返，不理解学号、公告或版本。
-- 导出/导入仅含 `global`、`entries`、`tasks`；清空只删除两张业务表，保留学期起点与来源设置。
+- 导出/导入主体为 `global`、`entries`、`tasks`，接受 UI 的 `exportedAt` 元数据；列表完整往返，空白目标采用备份定义，已有数据目标遇同 id 不同语义会新建 id 并重映射导入条目，重试复用等价定义（详见 `13`）；清空只删除两张业务表，保留学期起点与来源设置。
+- 类别迁移独立使用 `categoryModelVersion: 1`：仅把旧 `source=buaa`、`sourceKey` 以 `teaching:` 开头且类别为 `study` 的教学条目改为 `course`；手建学习不变，旧规则直接物化为 `course`，已删除类别仍归 `other`。过渡 schema 保留类别列表与版本字段，重试不丢配置。
 - 启动时一次性把存量周规则按实际周次转成带日期的条目；需要 `termStart`，保留改期，取消项不生成；无旧 API/旧 JSON 导入兼容。隔离转换与备份边界见 `13-entry-model.md`。
 
-### 3.3 类别 → token 映射（唯一一处常量，client 半）
+### 3.3 动态类别与配色
 
-| category | token |
-|---|---|
-| `homework` | `--dsw-alias-state-warn-primary` |
-| `exam` | `--dsw-alias-state-error-primary` |
-| `sports` | `--dsw-alias-state-success-primary` |
-| `meeting` / `study`（学习） / `other` | `color-mix(in srgb, var(--dsw-alias-state-idle-primary) 45%, var(--dsw-alias-label-primary))` |
+`global.categories` 是有序的 `{ id, name, color: '#RRGGBB' }[]`；id 稳定且唯一，改名不改 id，新增 id 为 `custom-UUID`。缺少列表的旧数据才使用默认七项，已有列表不补回被删除的预设。
+
+| 默认 id | 名称 | 颜色 |
+|---|---|---|
+| `course` | 课程 | `#3B82F6` |
+| `homework` | 作业 | `#F59E0B` |
+| `exam` | 考试 | `#EF4444` |
+| `meeting` | 会议 | `#A855F7` |
+| `study` | 学习 | `#06B6D4` |
+| `sports` | 运动 | `#22C55E` |
+| `other` | 其它 | `#64748B` |
+
+`other` 必须保留、名称固定“其它”、颜色可调；其余预设与自定义类别均可改名、改色、删除。`setCategories(categories)` 专用全量入口会把被删类别的现有条目改归 `other`，其余字段保留。手工写未知 id 报错；来源快照未知 id 归 `other`，后续同步不会复活已删预设。`setMeta` 仅修改既有学期设置，不拥有类别列表。
+
+客户端从 snapshot 的列表动态生成 grid/editor/batch 选项和颜色；设置页通过原生颜色选择器即时预览同款日历块，显式保存后生效。小日历色点也使用实际类别颜色。锁定控件为紧凑 switch，单一文案“锁定（不可拖动）”，语义仍仅限快捷拖动。
 
 完成态（经 `task.completed` 关联）：次文字色 + 删除线 + 降透明度，**只改渲染不改数据**。
 
@@ -196,18 +207,22 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 
 ## 5. 接口面（速查）
 
-**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；完整来源快照 `replaceSourceEntries(source, inputs)`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；元数据 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；维护 `clearAllData()`（清空条目/任务，设置保留）；`subscribe(listener)`；`upcomingReminders()`。
+**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；完整来源快照 `replaceSourceEntries(source, inputs)`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；元数据 `getMeta/setMeta/setCategories/snapshot/getSourceState/setSourceState`；维护 `clearAllData()`（清空条目/任务，设置保留）；`subscribe(listener)`；`upcomingReminders()`。
 
 `replaceSourceEntries` 先校验整份输入与唯一 `sourceKey`，再增改并删除本来源缺席条目；稳定键保留既有 ID，不触碰其他来源。详细约束见 `11` §2。
 
-**核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：两个族工具 `sched_task`、`sched_entry`，用 `action` 选操作（task：`list/create/update/complete/delete`；entry：`list/create/update/delete/batch_create`）。2026-10-20 由 10 个单动词工具合并——工具 schema 每轮都进上下文，动词改由 `action` 枚举表达；格式、类别与冲突细则移入 `schedule` skill 按需加载。返回 canonical value，人读文本只进 `render`。
+**核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：两个族工具 `sched_task`、`sched_entry`，用 `action` 选操作（task：`list/create/update/complete/delete`；entry：`list/create/update/delete/batch_create`）。2026-10-20 由 10 个单动词工具合并——工具 schema 每轮都进上下文，动词改由 `action` 枚举表达；格式、类别与冲突细则移入 `schedule` skill 按需加载。
 
-**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/weekStart/termWeek/today/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
+返回 canonical value；DSH 仅将 `output.render` 的 content 发给模型，不会自动发送 canonical value，所以 render 同时输出人读摘要与完整 JSON，列表、写入和冲突都不能只给摘要。
+
+entry 的 `category` 为动态字符串 id；`action=list` 返回 `{count, entries, categories, termStart}`，空列表同样返回当前类别。create/update 回显已持久化完整条目；batch_create 的成功项含 `entry`，失败项保留 `conflicts`，只重试失败项。条目回执附响应专用 `week: number | null`、`dayOfWeek: 1..7`，按 start 自带时区的日期和学期起点计算，不写入存储或外推缺课。未知起点或学期前日期的 week 为 null。读工具只暴露条目与公开元数据，不返回来源配置或凭据；正常成功不再读取内部文件校验。
+
+**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/weekStart/termWeek/today/entries/tasks）+ `POST`（op 分发，同服务方法；含 `op=setCategories`（参数 `categories`，返回更新后的 getMeta）及本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
 
 **北航来源插件**：Agent 工具 `buaa_course_sync`；客户端通道 `GET/POST /api/buaa-schedule`
 （学号、同步）。教务的 `getMyScheduleDetail.do` 一次返回整学期课表且每个格自带星期/时间/周次，
 所以同步没有窗口、没有分页、没有会话缓存：一次登录 + 两个请求（课表、考试），课表按
-`replaceSourceEntries` 对账锁定的学习与考试条目，周次直接取教务给的值并转换为日期，不外推；考试任务同时保留。学期码由用户填的学期起始日期
+`replaceSourceEntries` 对账锁定的课程与考试条目，周次直接取教务给的值并转换为日期，不外推；考试任务同时保留。学期码由用户填的学期起始日期
 （第一周周一，归核心设置页所有）推导，`termCode={Y-1}-{Y}-3` 为 7–8 月的暑期学期。
 设置卡只填学号与密码，不重复学期起点输入。
 `sourceState.buaa = { buaaId, termCode }` 仅供显示。它不注册日历面板/条目工具，也没有 `/buaa-sync`
@@ -219,9 +234,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 前瞻直播条目（推算 `lock=false`，官方明确时刻 `lock=true`）；版本更新只在来源卡显示。条目带来源归属，只删改本源条目，不触碰其他来源或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
 后台每 6 小时刷新（`ctx.timer`，缺失时只停自动刷新，工具与设置卡仍可用）。
 
-**systemPrompt 常驻段**：核心段只保留教学周与工具入口（细则在 `schedule` skill）+ 北航段
-（`buaa_course_sync`、密码仅当次使用、整学期快照语义）+ 二游段（`gacha_schedule`、
-官方时间写回、`[gacha:<id>]` 归属）。
+**Agent 知识入口分层**：核心 `systemPrompt` 只保留当前教学周/起点、核心工具入口与安全底线；`schedule` skill 只讲主插件通用操作，不包含来源工具、学校导入、游戏刷新或桥接规则。各来源 bundle 只在自身启用时注入自己的 prompt/tool 规则：北航负责导入前提、快照和统计回执；二游负责刷新、官方校正和固定周检。参数以工具 schema 为准，开发文档不作为日常操作前置。职责与验收见 [06 · 工作 Agent 的知识边界](06-tool-and-agent.md#0-工作-agent-的知识边界)。
 
 ---
 
@@ -250,7 +263,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 
 - 无参命令**整个省略 `input`**（`input: { hint: '' }` 抛 "input hint must not be empty"）。
 - API 查询参数做 nullish 与格式校验（双端），防止 `"undefined"` 字符串污染快照字段（2026-10-18 aN-NaN 事故链）。
-- CSS 只用 `--dsw-*` token，零颜色字面量；圆角/阴影走 token 刻度；locale zh/en 双语强制。
+- CSS shell 使用 `--dsw-*` token；唯一业务配色例外为配置类别的 `#RRGGBB` accent；圆角/阴影走 token 刻度；locale zh/en 双语强制。
 - 提醒子系统不依赖 `schedule`/`sessionController`；通知面见 §4.4 与 `client.notify.js`。
 
 ---
@@ -270,7 +283,7 @@ host `batchCreateEntries`）、任务筛选/排序/统计/进度环/即将到期
 
 **明确不迁移**（依据 §2 R 决策，勿"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与
 手机端、Flask/JWT/静态托管、自有 LLM key 管理与测试连接、`--primary-color` 主题体系与深色
-模式自有样式（DSH token 覆盖）、条目任意 hex 颜色（类别→token）、`Task.urgency`、只物化未来
+模式自有样式（DSH token 覆盖）、条目逐条任意 hex 颜色（当前允许类别级配置，见 §3.3）、`Task.urgency`、只物化未来
 7 天的截断导入、精力周期、自动排期/休息条目/由任务生成条目、语音/图片 OCR、
 SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接口删过期任务的副作用
 （已知缺陷，不修）、独立导入条目编辑路径（统一到普通条目 CRUD）、

@@ -49,7 +49,7 @@ test('explicit dates cover only upstream odd weeks and multi-teacher week groups
   assert.deepEqual(parsed.entries.map(row => row.start).sort(), ['2026-09-08T08:00:00+08:00', '2026-09-22T08:00:00+08:00', '2026-10-06T08:00:00+08:00'])
   assert.equal(parsed.entries[0].sourceKey, 'teaching:数学:2026-09-08:08:00')
   for (const row of parsed.entries) {
-    assert.equal(row.category, 'study'); assert.equal(row.lock, true); assert.equal(row.location, 'A101')
+    assert.equal(row.category, 'course'); assert.equal(row.lock, true); assert.equal(row.location, 'A101')
     assert.equal('teacher' in row, false); assert.equal('classroom' in row, false); assert.equal('weekRange' in row, false)
   }
   const movedRoom = parseTimetable(payload(cell({ placeName: 'C303', endTime: '09:40' })), '2026-09-07')
@@ -133,9 +133,23 @@ test('both source adapters integrate with real core snapshot and generic entry A
   assert.equal(first.entries.total, 3)
   assert.equal(service.listTasks({ scope: 'all' }).length, 1)
   assert.ok(service.listEntries().every(row => row.source === 'buaa' && row.lock && row.location))
-  const teachingId = service.listEntries().find(row => row.category === 'study').id
+  const teachingId = service.listEntries().find(row => row.category === 'course').id
   assert.equal((await runSync({ service, jw }, { password: 'test-only' })).entries.created, 0)
   assert.ok(service.listEntries().some(row => row.id === teachingId))
+  const importedIds = service.listEntries().map(row => row.id).sort()
+  await service.setCategories(service.getMeta().categories.filter(category => !['course', 'exam'].includes(category.id)))
+  assert.ok(service.listEntries().every(row => row.category === 'other'))
+  const fetchExams = jw.fetchExams
+  jw.fetchExams = async () => { throw new Error('offline after deleting exam category') }
+  const failed = await runSync({ service, jw }, { password: 'test-only' })
+  assert.equal(failed.exams.failed, 'offline after deleting exam category')
+  assert.deepEqual(service.listEntries().map(row => row.id).sort(), importedIds)
+  assert.ok(service.listEntries().every(row => row.category === 'other'))
+  assert.ok(!service.getMeta().categories.some(category => ['course', 'exam'].includes(category.id)))
+  jw.fetchExams = fetchExams
+  await runSync({ service, jw }, { password: 'test-only' })
+  assert.deepEqual(service.listEntries().map(row => row.id).sort(), importedIds)
+  assert.ok(service.listEntries().every(row => row.category === 'other'))
   const bilibili = { articleList: async () => [], featureVideos: async () => [], searchVideos: async () => [], dynamics: async () => [] }
   const gacha = createGachaService(ctx, { service, bilibili })
   try {

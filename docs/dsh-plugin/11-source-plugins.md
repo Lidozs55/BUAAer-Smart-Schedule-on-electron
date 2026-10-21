@@ -1,7 +1,7 @@
 # 11 · 来源适配器契约（新增学校/导入格式）
 
 > 一句话：**核心 `@lidozs55/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
-> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（学习/考试条目与考试任务）与二游前瞻
+> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（课程/考试条目与考试任务）与二游前瞻
 > `@lidozs55/dsh-schedule-gacha`（条目，见 `12-gacha-preview.md`）；前者适合当模板。
 
 ---
@@ -37,7 +37,7 @@
 | 条目 | `listEntries(from?, to?)`、`createEntry`、`updateEntry`、`moveEntry`、`deleteEntry`、`batchCreateEntries` |
 | 任务 | `listTasks({ scope, includeCompleted })`、`createTask`、`updateTask`、`setTaskCompleted`、`deleteTask` |
 | 来源快照 | `replaceSourceEntries(source, inputs)` |
-| 元数据 | `getMeta()`（`termStart`）、`setMeta()`、`getSourceState(source)`、`setSourceState(source, value)` |
+| 元数据 | `getMeta()`（`termStart/categories`）、`setMeta()`、`setCategories(categories)`、`getSourceState(source)`、`setSourceState(source, value)` |
 | 订阅 | `subscribe(listener)`、`upcomingReminders()` |
 
 写方法抛 `ServiceError`：`invalid_input` / `not_found` / `conflict`（带 `details.conflicts`）。
@@ -54,7 +54,7 @@
 }
 ```
 
-类别仅 `homework/exam/meeting/study/sports/other`，`study` 展示为「学习」。地点不另设来源专用字段。锁定不限制编辑、删除、右键菜单或工具更新。
+类别来自 `getMeta().categories` 的有序 `{ id, name, color: "#RRGGBB" }` 定义，id 稳定；默认七项 `course/homework/exam/meeting/study/sports/other`，名称与颜色见 `00` §3.3。`other` 固定名“其它”、不可删除但可改色；其余预设均可删除，现有条目重归 `other`。手工未知 id 报错，来源快照未知 id 归 `other`，来源不得恢复用户删除的预设。地点不另设来源专用字段。锁定不限制编辑、删除、右键菜单或工具更新。
 
 `replaceSourceEntries(source, inputs)` 是**该来源完整条目快照**：
 
@@ -64,7 +64,7 @@
 - 这是完整性声明，不能拿局部抓取结果冒充完整快照；普通增量使用条目 CRUD，不另设类型或周期接口。
 - 来源设置自己写 `setSourceState`，快照接口不解释学期码、教师、游戏或公告。
 
-核心 `clearAllData()` 清空 `entries` / `tasks`，`global` 与来源状态保留。导出/导入也仅含 `global`、`entries`、`tasks`，不接受旧模型 JSON。启动时的隔离存量转换不属于来源公开契约（见 `13-entry-model.md`）。
+核心 `clearAllData()` 清空 `entries` / `tasks`，`global` 与来源状态保留。导出/导入主体为 `global`、`entries`、`tasks`，接受 UI 的 `exportedAt`；完整保留类别定义，不接受旧模型 JSON。空白目标采用导入定义，已有数据目标遇 id 语义冲突会改映射，重试复用同名同色等价定义。启动时的隔离存量转换不属于来源公开契约（见 `13-entry-model.md`）。
 
 ---
 
@@ -153,7 +153,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - `host/state.js`：`sourceState.buaa`（学号/学期码，仅供显示）。
 - `host/jw.js`：SSO 登录 + 两个整学期端点（`getMyScheduleDetail.do?type=term`、`exams.do`）；
   登录 jar 只在本次调用内存活，不落盘、不跨调用复用。
-- `host/parse.js`：整学期课表按学期起点与教务实际周次生成带日期的普通学习条目；`exams.do` 生成考试条目与考试任务草稿。周次从 `cellDetail` 的周次行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开后只生成实际日期，不外推空周。教学安排使用 `category: 'study'`，考试使用 `exam`，均为 `lock: true`；地点统一为 `location`。教师姓名/学分/课程号/教务配色等日历不消费字段就地丢弃。
+- `host/parse.js`：整学期课表按学期起点与教务实际周次生成带日期的普通课程条目；`exams.do` 生成考试条目与考试任务草稿。周次从 `cellDetail` 的周次行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开后只生成实际日期，不外推空周。教学安排使用 `category: 'course'`，考试使用 `exam`，均为 `lock: true`；地点统一为 `location`。教师姓名/学分/课程号/教务配色等日历不消费字段就地丢弃。
+- 类别升级独立标记 `categoryModelVersion: 1`：只把旧 BUAA `sourceKey` 以 `teaching:` 开头、类别为 `study` 的教学条目迁为 `course`，手建学习不变；若目标类别已删则归 `other`，不复活预设。
 - `host/sync.js`：一次登录 → `replaceSourceEntries('buaa', [...teachingEntries, ...examEntries])` 完整来源快照 + 考试任务对账；重复导入用稳定键保留条目 ID，缺席条目从本来源移除。学期码由 `termStart` 推导（见下），`-3` 为暑期学期。考试任务仍独立保留，身份键是**名称 + 考试日期**，同名期中/期末不能合并。任务删除范围限于本源且日期不早于学期起点；用户手建的同名考试任务只校正 `due`，标题/优先级/备注归用户。
 - `host/tools.js`：`buaa_course_sync`（Agent 调）。
 - `host/api.js`：`/api/buaa-schedule`（设置卡调；只写学号，学期起点归核心设置页）。

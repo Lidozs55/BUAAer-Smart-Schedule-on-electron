@@ -5,7 +5,7 @@
  * chain, then bumps a revision counter and notifies subscribers.
  */
 import { randomUUID } from 'node:crypto'
-import { ENTRY_CATEGORIES, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES } from './model.js'
+import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
 import { findConflicts } from './conflicts.js'
 import { anchorToday, addDays, dateKey, termWeek, today, zonedIso } from './semester.js'
 
@@ -71,6 +71,9 @@ export function createScheduleService(ctx, domain) {
     }
   }
 
+  const categories = () => cloneCategories(domain.global.get().categories)
+  const categoryIds = () => new Set(categories().map(category => category.id))
+
   const allEntries = () => [...entries.entries()].map(([, row]) => row)
   const allTasks = () => [...tasks.entries()].map(([, row]) => row)
   /** Gate writes that overlap existing time unless the caller opts in. */
@@ -96,10 +99,8 @@ export function createScheduleService(ctx, domain) {
       row.lock = input.lock ?? false
     }
     if (!partial || input.category !== undefined) {
-      // The store's zod schema enum-checks category on every start, and an
-      // invalid record fails domain activation — gate it at the write.
-      assert(ENTRY_CATEGORIES.includes(input.category ?? (partial ? undefined : 'other')), 'invalid_input',
-        `category 须为 ${ENTRY_CATEGORIES.join('|')}：${input.category}`)
+      assert(categoryIds().has(input.category ?? (partial ? undefined : 'other')), 'invalid_input',
+        `未知 category：${input.category}；请先查询类别列表`)
       row.category = input.category ?? 'other'
     }
     if (input.allDay) {
@@ -235,9 +236,12 @@ export function createScheduleService(ctx, domain) {
       for (const input of inputs) {
         try {
           const row = await service.createEntry(input, { allowConflicts })
-          results.push({ ok: true, id: row.id, title: row.title })
+          results.push({ ok: true, id: row.id, title: row.title, entry: row })
         } catch (error) {
-          results.push({ ok: false, title: input?.title, code: error.code ?? 'error', message: error.message })
+          results.push({
+            ok: false, title: input?.title, code: error.code ?? 'error', message: error.message,
+            ...(error.details?.conflicts ? { conflicts: error.details.conflicts } : {}),
+          })
         }
       }
       return results
@@ -249,7 +253,7 @@ export function createScheduleService(ctx, domain) {
       assert(Array.isArray(inputs), 'invalid_input', '日程快照必须是数组')
       const incoming = new Map()
       for (const input of inputs) {
-        const row = entryInput({ ...input, source })
+        const row = entryInput({ ...input, source, category: categoryIds().has(input.category) ? input.category : 'other' })
         assert(row.sourceKey !== null && row.sourceKey !== undefined, 'invalid_input', '来源条目需要 sourceKey')
         assert(!incoming.has(row.sourceKey), 'invalid_input', `重复 sourceKey：${row.sourceKey}`)
         incoming.set(row.sourceKey, row)
@@ -382,7 +386,56 @@ export function createScheduleService(ctx, domain) {
     /** Generic schedule metadata. Source adapters keep their own state below. */
     getMeta() {
       const global = domain.global.get()
-      return { termStart: global.termStart }
+      return { termStart: global.termStart, categories: categories() }
+    },
+
+    async setCategories(input) {
+      const next = validateCategories(input)
+      const ids = new Set(next.map(category => category.id))
+      // Remap before removing definitions so a failed write remains retryable.
+      let remapped = false
+      try {
+        for (const row of allEntries()) {
+          if (ids.has(row.category)) continue
+          await entries.put(row.id, { ...row, category: 'other' })
+          remapped = true
+        }
+        await domain.global.set({ ...domain.global.get(), categories: next })
+      } catch (error) {
+        if (remapped) changed(['entries'])
+        throw error
+      }
+      changed(remapped ? ['global', 'entries'] : ['global'])
+      return service.getMeta()
+    },
+
+    /** Install backup definitions before its rows, without replacing target semantics. */
+    async importCategories(input) {
+      const incoming = validateCategories(input)
+      const current = categories()
+      const fresh = allEntries().length === 0 && allTasks().length === 0
+        && JSON.stringify(current) === JSON.stringify(cloneCategories())
+      const merged = fresh ? [] : current
+      const mapping = new Map([['other', 'other']])
+      for (const category of incoming) {
+        if (!fresh && category.id === 'other') continue
+        const sameId = merged.find(item => item.id === category.id)
+        if (sameId && sameId.name === category.name && sameId.color === category.color) {
+          mapping.set(category.id, category.id)
+          continue
+        }
+        const equivalent = sameId && merged.find(item => item.name === category.name && item.color === category.color)
+        if (equivalent) {
+          mapping.set(category.id, equivalent.id)
+          continue
+        }
+        const id = sameId ? `custom-${randomUUID()}` : category.id
+        merged.push({ ...category, id })
+        mapping.set(category.id, id)
+      }
+      await domain.global.set({ ...domain.global.get(), categories: merged })
+      changed(['global'])
+      return mapping
     },
 
     async setMeta(patch) {
@@ -467,6 +520,19 @@ export function createScheduleService(ctx, domain) {
     upcomingReminders: () => [],
   }
 
+  // Serialize whole read/validate/write units: domain writes alone cannot
+  // prevent category deletion racing an entry write or a global update.
+  let mutationTail = Promise.resolve()
+  for (const name of ['createEntry', 'updateEntry', 'moveEntry', 'deleteEntry',
+    'replaceSourceEntries', 'createTask', 'updateTask', 'deleteTask',
+    'clearAllData', 'setCategories', 'importCategories', 'setMeta', 'setSourceState']) {
+    const mutate = service[name]
+    service[name] = (...args) => {
+      const result = mutationTail.then(() => mutate(...args))
+      mutationTail = result.catch(() => {})
+      return result
+    }
+  }
   return service
 }
 

@@ -29,7 +29,7 @@ window.__ModuleLoader__.load({
   factory: (require) => {
     const core = require('@lidozs55/dsh-schedule/client.core.js')
     const grid = require('@lidozs55/dsh-schedule/client.gridmath.js')
-    const { React, CATEGORY_TOKEN, addDays, dateToZonedIso } = core
+    const { React, categoryStyle, addDays, dateToZonedIso } = core
     const { useState, useEffect, useRef, useMemo } = React
     const {
       DAY_START_MIN, DAY_END_MIN, DAY_SPAN_MIN, SNAP_MIN, relMinutes, gridDay,
@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
     const clampToDay = minutes => Math.min(Math.max(minutes, DAY_START_MIN), DAY_END_MIN)
     const snapDelta = dy => Math.round(dy / PX_PER_MIN / SNAP_MIN) * SNAP_MIN
 
-    function EventBlock({ block, isSelected, onResizeStart }) {
+    function EventBlock({ block, isSelected, onResizeStart, categories }) {
       const share = block.laneCount > 1 ? 100 / block.laneCount : 100
       return h('div', {
         className: [
@@ -66,7 +66,7 @@ window.__ModuleLoader__.load({
           height: `${Math.max(14, block.height - 2)}px`,
           left: `calc(${block.lane * share}% + 1px)`,
           width: `calc(${share}% - 2px)`,
-          '--bsch-block-color': CATEGORY_TOKEN[block.category] ?? CATEGORY_TOKEN.other,
+          ...categoryStyle(block.category, categories),
           ...(block.translate !== null
             ? { transform: `translate(${block.translate.x}px, ${block.translate.y}px)` }
             : {}),
@@ -578,7 +578,7 @@ window.__ModuleLoader__.load({
             resizeTo: isResizing ? (resize.endMin - startMin) * PX_PER_MIN : null,
           }
           return h('div', { key: id },
-            h(EventBlock, {
+            h(EventBlock, { categories: props.categories,
               block,
               isSelected: selected.has(item.id),
               onResizeStart: startResize,

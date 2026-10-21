@@ -5,8 +5,8 @@
 ## 契约与验收
 
 - 主日程只有 entries；tasks 仍表达截止事项。entry 增加 `location: string | null` 和 `lock: boolean`（创建默认 false）。
-- lock 只拦截左键快捷移动/调整时长；显式编辑、删除、工具更新与来源同步照常工作。
-- 不再保留 course 分类、周期规则服务、例外编辑器或单独的提醒类型。教学安排使用 study 分类，地点统一 location。
+- lock 只拦截左键快捷移动/调整时长；显式编辑、删除、工具更新与来源同步照常工作。编辑器使用紧凑可访问 switch，标签“锁定（不可拖动）”。
+- 不再保留周期规则服务、例外编辑器或单独的提醒类型；`course` 是普通可配置的课程类别，教学安排使用 `course`，手工学习默认使用 `study`，地点统一 `location`。
 - 已有周期规则启动时一次性展开全部原始周次；保留改期例外，取消的实例不生成；确定性 id 保证失败重试不重复。缺少学期起点时拒绝迁移，不猜日期、不丢数据。
 - 来源完整快照使用 `replaceSourceEntries(source, inputs)`；`sourceKey` 是来源内稳定身份，更新保留 id，缺失项删除。输入必须全量校验后才写入。
 - 教务教学安排和考试都生成 lock=true 的 entry。gacha 只导入前瞻直播；推断时间 lock=false，明确公告确认 lock=true；更新只在来源卡展示。
@@ -33,4 +33,17 @@
 | gacha 更新和直播均占主日程 | 仅直播占主日程，确认程度决定锁定 | 更新不占用用户时间 |
 | 考试导入截止任务 | 同时导入锁定占时条目与截止任务 | 主日程显示真实考试时间 |
 
-旧 JSON 导入的 courses/courseOverrides 不再受支持；新导出仅含 global、entries 和 tasks。运行前保存宿主数据备份；代码回退不应直接覆盖已经迁移的存储。
+旧 JSON 导入的 courses/courseOverrides 不再受支持；新导出主体为 global、entries 和 tasks，UI 的 exportedAt 元数据可回灌。运行前保存宿主数据备份；代码回退不应直接覆盖已经迁移的存储。
+
+
+## 类别设置与迁移
+
+`global.categories` 是有序 `{ id, name, color: '#RRGGBB' }[]`，稳定 id 不随名称改变；新类别使用 `custom-UUID`。默认七项依次为课程 `course/#3B82F6`、作业 `homework/#F59E0B`、考试 `exam/#EF4444`、会议 `meeting/#A855F7`、学习 `study/#06B6D4`、运动 `sports/#22C55E`、其它 `other/#64748B`。仅缺少配置时补默认，不能向已有列表补回删除的预设。
+
+`other` 名称固定“其它”、不可删但颜色可调；其余预设和自定义类别均可改名、配色、删除。专用 `setCategories` 全量保存列表，删除时把现有条目重归 `other` 并保留来源、时间、锁等其它字段。手建未知类别 id 明确拒绝，来源快照未知 id 则归 `other`，后续来源同步不得复活类别。工具 `sched_entry(action=list)` 返回当前 `categories`，写入使用动态 id。
+
+独立迁移标记为 `categoryModelVersion: 1`，不替代 `entryModelVersion: 2`。只把旧 `source=buaa` 且 `sourceKey` 以 `teaching:` 开头的 `study` 教学条目改为 `course`，普通手建学习不变；旧周规则直接物化为 `course`，目标类别缺席仍归 `other`。过渡 schema 保留 `categories/categoryModelVersion`，迁移标记最后写入，重复启动不丢配置、不复活删除项。
+
+导出带完整 `global.categories`，导入接受可选 `exportedAt`。空白目标采用备份定义、顺序与颜色；已有数据目标保留原定义，同 id 同名同色复用，同 id 不同语义分配新 id 并重映射导入条目，重试会复用已有的同名同色等价类别而不重复增长。已有数据目标的 `other` 保留本地定义。导入后客户端重新读取 metadata。
+
+设置页原生颜色选择器即时渲染同款日历块预览，显式保存；未保存草稿在失败、来源元数据刷新与学期保存后仍保留。本轮最终全套插件测试在 UTC 与 Asia/Shanghai 各通过 90/90，无跳过；包含真实已安装 DomainFacility 与隔离 KV 后端的两次重开、重复冲突备份导入、删除课程/考试类别后的成功同步及考试抓取失败保留。44 个插件脚本语法检查通过。编辑器、批量编辑器、周网格和小日历从类别配置读取选项、名称和颜色。shell 的主题样式仍使用宿主 token，配置类别 accent 是允许的颜色字面量例外。本轮另有隔离的真实 React/Edge 自动化检查：设置页改名、取色、保存、新增、取消、保护“其它”，以及 EventEditor 锁开关的鼠标、Space、Enter 操作通过，设置页无报错。该检查未连接用户业务库，不是现有 GUI 的验收；现有 URL 返回 401，未做人工像素、配色对比度或完整主题验收。上方执行队列是统一条目切换的历史记录。

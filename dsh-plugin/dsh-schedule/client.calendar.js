@@ -29,15 +29,11 @@ window.__ModuleLoader__.load({
       return { year: date.getFullYear(), month: date.getMonth() }
     }
 
-    /**
-     * Month grid with per-day importance dots. Importance mirrors the
-     * original: exam 3, homework 2, anything else 1 — computed from the
-     * entries of parallel week snapshots covering the displayed month.
-     */
-    function MiniCalendar({ t, api, onJump }) {
+    /** Month grid with up to three actual category-color dots per day. */
+    function MiniCalendar({ t, api, onJump, categories }) {
       const now = new Date()
       const [cursor, setCursor] = useState({ year: now.getFullYear(), month: now.getMonth() })
-      const [levels, setLevels] = useState({})
+      const [dayCategories, setDayCategories] = useState({})
 
       useEffect(() => {
         let alive = true
@@ -53,31 +49,23 @@ window.__ModuleLoader__.load({
         Promise.all(anchors.map(week => api.snapshot(week).catch(() => null)))
           .then(snapshots => {
             if (!alive) return
-            // Importance per display day: exam 3, homework 2, else 1 —
-            // plus one step when the day carries 3+ entries (capped at 3),
-            // mirroring the original's calculateImportanceLevel.
-            const levelByDay = {}
-            const countByDay = {}
-            // Adjacent Monday windows overlap by the last night's 0–4 tail,
-            // so one row can appear in two snapshots; count it once.
+            const byDay = {}
+            // Adjacent windows overlap in their 0–4 tail; count each row once.
             const seen = new Set()
             for (const snapshot of snapshots) {
               for (const entry of snapshot?.entries ?? []) {
                 if (seen.has(entry.id)) continue
                 seen.add(entry.id)
                 const key = grid.gridDay(entry.start)
-                const base = entry.category === 'exam' ? 3 : entry.category === 'homework' ? 2 : 1
-                levelByDay[key] = Math.max(levelByDay[key] ?? 0, base)
-                countByDay[key] = (countByDay[key] ?? 0) + 1
+                const id = core.categoryId(entry.category, categories)
+                const ids = byDay[key] ??= []
+                if (!ids.includes(id) && ids.length < 3) ids.push(id)
               }
             }
-            for (const [key, count] of Object.entries(countByDay)) {
-              if (count >= 3) levelByDay[key] = Math.min(3, levelByDay[key] + 1)
-            }
-            setLevels(levelByDay)
+            setDayCategories(byDay)
           })
         return () => { alive = false }
-      }, [api, cursor])
+      }, [api, cursor, categories])
 
       const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate()
       const leading = new Date(cursor.year, cursor.month, 1).getDay() // Sunday-first, like the original
@@ -87,16 +75,18 @@ window.__ModuleLoader__.load({
           h('div', { key: `e${i}`, className: 'bsch-mc-day is-empty' })),
         ...Array.from({ length: daysInMonth }, (_, i) => {
           const key = `${cursor.year}-${pad2(cursor.month + 1)}-${pad2(i + 1)}`
-          const level = levels[key] ?? 0
+          const ids = dayCategories[key] ?? []
           return h('div', {
             key,
             className: [
               'bsch-mc-day',
               key === todayKey ? 'is-today' : '',
-              level > 0 ? `has-dot lv${level}` : '',
+              ids.length ? 'has-dot' : '',
             ].filter(Boolean).join(' '),
             onClick: () => onJump(key),
-          }, String(i + 1), h('span', { className: 'bsch-mc-dot' }))
+          }, String(i + 1), h('span', { className: 'bsch-mc-dots' }, ids.map(id =>
+            h('span', { key: id, className: 'bsch-mc-dot', title: core.categoryName(id, categories),
+              style: { background: core.categoryColor(id, categories) } }))))
         }),
       ]
       return h('div', { className: 'bsch-mc' },
@@ -119,7 +109,7 @@ window.__ModuleLoader__.load({
     }
 
     /** The week-range badge doubles as the quick-jump trigger (R10-1). */
-    function QuickJump({ t, api, weekStart, onJump }) {
+    function QuickJump({ t, api, weekStart, onJump, categories }) {
       const [open, setOpen] = useState(false)
       const range = `${weekStart.slice(5)} ~ ${addDays(weekStart, 6).slice(5)}`
       return h('div', { className: 'bsch-popanchor' },
@@ -131,7 +121,7 @@ window.__ModuleLoader__.load({
         open ? h('div', { className: 'bsch-pop-mask', onClick: () => setOpen(false) }) : null,
         open ? h('div', { className: 'bsch-popover' },
           h(MiniCalendar, {
-            t, api,
+            t, api, categories,
             onJump: day => { setOpen(false); onJump(day) },
           })) : null)
     }
@@ -169,6 +159,7 @@ window.__ModuleLoader__.load({
       // and the rows travel inside the same snapshot object.
       const snapshot = weekly.data
         ?? (data !== null && data.weekStart === weekStart ? data : null)
+      const categories = snapshot?.global?.categories
       const viewWeek = snapshot?.weekStart ?? weekStart
       const [editor, setEditor] = useState(null)
       const [batch, setBatch] = useState(false)
@@ -250,8 +241,16 @@ window.__ModuleLoader__.load({
         undoApi.push({
           label: 'delete',
           undo: async () => {
-            const created = await api.batchCreateEntries(rows, { allowConflicts: true })
-            liveIds = created.filter(row => row.ok).map(row => row.id)
+            const results = await api.batchCreateEntries(await core.currentCategoryInputs(api, rows), { allowConflicts: true })
+            const restoredIds = results.filter(row => row.ok).map(row => row.id)
+            const failed = results.find(row => !row.ok)
+            if (failed) {
+              // The undo step stays retryable; do not duplicate partial restores.
+              if (restoredIds.length) await api.deleteEntry(restoredIds)
+              await refreshBoth()
+              throw new Error(failed.message ?? t('entry.restoreFailed'))
+            }
+            liveIds = restoredIds
             await refreshBoth()
           },
           redo: async () => {
@@ -267,7 +266,7 @@ window.__ModuleLoader__.load({
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, -7)) }, '‹'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, 7)) }, '›'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(grid.anchorToday()) }, t('toolbar.today')),
-          h(QuickJump, { t, api, weekStart: viewWeek, onJump: day => setWeekStart(day) }),
+          h(QuickJump, { t, api, categories, weekStart: viewWeek, onJump: day => setWeekStart(day) }),
           snapshot?.termWeek != null
             ? h('span', { className: 'bsch-badge' }, `${t('week.prefix')} ${snapshot.termWeek} ${t('week.suffix')}`.trim())
             : h('span', { className: 'bsch-badge' }, t('week.unknown')),
@@ -281,6 +280,7 @@ window.__ModuleLoader__.load({
           h('button', { className: 'bsch-btn', onClick: () => setBatch(true) }, t('toolbar.batch')),
           h('button', { className: 'bsch-btn is-primary', onClick: () => setEditor({ draft: {} }) }, `+ ${t('toolbar.newEntry')}`)),
         h(UpcomingStrip, { t, tasks: snapshot?.tasks ?? [], today: snapshot?.today }),
+        undoApi.error ? h('div', { className: 'bsch-error', role: 'alert' }, undoApi.error) : null,
         weekly.error !== null
           ? h('div', { className: 'bsch-list' },
               h('span', { className: 'bsch-error' }, t('state.error').replace('{message}', weekly.error)),
@@ -289,6 +289,7 @@ window.__ModuleLoader__.load({
               h(WeekGrid, {
                 t, timer, weekStart: viewWeek, today: snapshot?.today,
                 entries: snapshot?.entries ?? [],
+                categories,
                 completedTaskIds: completedIds,
                 onEditEntry: block => setEditor({ initial: block.raw }),
                 // startMin/endMin are grid-relative minutes (04:00 = 240).
@@ -300,7 +301,7 @@ window.__ModuleLoader__.load({
                 onDeleteEntries: items => void deleteEntries(items),
               })),
         editor !== null ? h(EventEditor, {
-          t, api,
+          t, api, categories,
           initial: editor.initial ?? null,
           draft: editor.draft,
           undoApi,
@@ -309,7 +310,7 @@ window.__ModuleLoader__.load({
           onSaved: refreshBoth,
         }) : null,
         batch ? h(BatchEditor, {
-          t, api, undoApi,
+          t, api, undoApi, categories: snapshot?.global?.categories,
           refresh: refreshBoth,
           onClose: () => setBatch(false),
         }) : null,

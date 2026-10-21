@@ -88,8 +88,13 @@ export const scheduleSpec = defineDomain({
     entries: domainTable(entrySchema),
   },
   global: {
-    schema: z.object({ termStart: z.string(), sourceState: z.record(z.string(), z.string()), entryModelVersion: z.literal(2) }),
-    initial: { termStart: '', sourceState: {}, entryModelVersion: 2 },
+    // categorySchema validates stable ids, nonempty names and #RRGGBB colors;
+    // cloneCategories() returns the ordered seven defaults (00 §3.3).
+    schema: z.object({ termStart: z.string(), sourceState: z.record(z.string(), z.string()),
+      entryModelVersion: z.literal(2), categoryModelVersion: z.literal(1),
+      categories: categorySchema.default(cloneCategories) }),
+    initial: { termStart: '', sourceState: {}, entryModelVersion: 2,
+      categoryModelVersion: 1, categories: cloneCategories() },
   },
 })
 ```
@@ -153,8 +158,10 @@ update(key: K, fn: (current: V) => V): Promise<V>
 
 | 事实 | 落点 | 规则 |
 |---|---|---|
-| 日历占时事项 | `entries` | 所有来源共用标题/起止/类别/地点/锁；导入教学安排用 `study`（学习） |
+| 日历占时事项 | `entries` | 所有来源共用标题/起止/类别/地点/锁；导入教学安排用 `course`（课程），已删类别由来源快照归 `other` |
 | 截止与完成状态 | `tasks` | 任务不占日历时间；`entryId` 可关联条目 |
+| 类别定义与顺序 | `global.categories` | `{id,name,color}` 数组；稳定 id、`#RRGGBB`；默认七项见 `00` §3.3，已有配置不补回预设 |
+| 类别迁移版本 | `global.categoryModelVersion` | 当前为 `1`，与 `entryModelVersion: 2` 独立 |
 | 学期第一周周一 | `global.termStart` | 用于教学周标签与导入时日期换算，不在读取时扩展安排 |
 | 学号、公告版本等来源私有状态 | `global.sourceState.<source>` | 核心只存 JSON；密码、Cookie jar 不持久化 |
 | 提醒提前量 | 插件 `Config` | 任务与条目两类；不保存“是否提醒”业务字段 |
@@ -165,8 +172,10 @@ update(key: K, fn: (current: V) => V): Promise<V>
 2. **归属不是类型**：`source` / `sourceKey` 是可选来源身份。完整快照使用 `replaceSourceEntries`，稳定键保留 ID，预校验失败不开始写入（见 `11` §2）。
 3. **锁仅限制快捷拖动**：`location` 是可空字符串，`lock` 默认 `false`；锁定不拒绝普通编辑、删除或工具更新。
 4. **启动时一次转换**：按存量实际周次生成带日期的条目，保留改期、跳过取消项；缺学期起点就明确失败且不删除原始数据。完成标记为 `entryModelVersion: 2`。这不是旧 API/旧 JSON 的持续兼容面，备份与切换见 `13-entry-model.md`。
-5. **导出/导入只认当前格式**：`global`、`entries`、`tasks`。清空仅删两张业务表并保留设置。
-6. **提醒无持久业务状态**：`upcomingReminders()` 现算，页面通知与可选桌宠桥读取同一集合。浏览器去重只存 localStorage，不是另一份业务数据。
+5. **导出/导入只认当前格式**：主体 `global`、`entries`、`tasks`，接受 UI 的 `exportedAt`；类别列表往返保留。空白目标采用导入定义；已有数据目标保留原定义，同 id 同名同色复用，冲突新建 id 并重映射导入条目，重试复用已生成的等价定义；原 `other` 在已有数据目标保留为兜底。清空仅删两张业务表并保留设置。
+6. **类别专用写面**：`setCategories` 验证完整有序列表，`other` 名称固定“其它”、不可删但可改色；删除任意其它预设/自定义类别时仅重归现有条目，来源快照不会恢复预设。`setMeta` 不写类别，手工未知 id 拒绝、来源未知 id 归 `other`。
+7. **独立类别迁移**：旧 BUAA `teaching:` 条目仅在 `study` 时改 `course`，手工学习不变；旧周规则直接生成 `course`。过渡 schema 显式保留 `categories/categoryModelVersion`，标记最后持久化，失败重试安全。
+8. **提醒无持久业务状态**：`upcomingReminders()` 现算，页面通知与可选桌宠桥读取同一集合。浏览器去重只存 localStorage，不是另一份业务数据。
 
 ---
 

@@ -6,13 +6,21 @@
  * can read the reasons and retry with `allow_conflicts`.
  *
  * Compact surface (2026-10-20): the ten original one-verb tools were
- * folded into two family tools plus the source adapter's sync tool. Tool
+ * folded into the core's two family tools. Tool
  * schemas are sent with every request, so the verbs are an `action` enum
  * instead of separate declarations; per-action formats and category rules
  * live in the `schedule` skill and are loaded only when needed.
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { ENTRY_CATEGORIES, PRIORITIES, TASK_TYPES } from './model.js'
+import { PRIORITIES, TASK_TYPES } from './model.js'
+import { dayOfWeek, termWeek } from './semester.js'
+
+// Use the entry's explicit calendar date, independent of the host's time zone.
+const entryResult = (entry, termStart) => ({
+  ...entry,
+  week: termWeek(termStart, entry.start.slice(0, 10)),
+  dayOfWeek: dayOfWeek(entry.start.slice(0, 10)),
+})
 
 const OUTPUT = { type: 'object', additionalProperties: true }
 
@@ -80,16 +88,14 @@ async function runTask(service, args) {
 async function runEntry(service, args) {
   switch (args.action) {
     case 'list': {
-      const entries = service.listEntries(args.from, args.to)
-      return {
-        count: entries.length,
-        entries,
-      }
+      const meta = service.getMeta()
+      const entries = service.listEntries(args.from, args.to).map(entry => entryResult(entry, meta.termStart))
+      return { count: entries.length, entries, categories: meta.categories, termStart: meta.termStart }
     }
     case 'create':
-      return service.createEntry(entryInput(args), { allowConflicts: args.allow_conflicts ?? false })
+      return entryResult(await service.createEntry(entryInput(args), { allowConflicts: args.allow_conflicts ?? false }), service.getMeta().termStart)
     case 'update':
-      return service.updateEntry(args.id, entryInput(args), { allowConflicts: args.allow_conflicts ?? false })
+      return entryResult(await service.updateEntry(args.id, entryInput(args), { allowConflicts: args.allow_conflicts ?? false }), service.getMeta().termStart)
     case 'delete':
       return service.deleteEntry(args.id)
     case 'batch_create': {
@@ -103,7 +109,9 @@ async function runEntry(service, args) {
       return {
         okCount: results.filter(item => item.ok).length,
         total: results.length,
-        results,
+        results: results.map(item => item.ok
+          ? { ...item, entry: entryResult(item.entry, service.getMeta().termStart) }
+          : item),
       }
     }
     default:
@@ -144,18 +152,18 @@ const conflictText = value =>
 const TOOLS = [
   {
     name: 'sched_task',
-    description: '查询或修改任务（作业/考试/截止事项）。action 选操作；时间用带时区 ISO 8601。规则见 schedule skill。',
+    description: '查询或修改有截止时间、可标记完成的待办任务；占时活动用 sched_entry。list 返回 tasks，写入回显结果；操作规则见 schedule skill。',
     parameters: {
       action: { ...enumParam(TASK_ACTIONS, 'list 查 / create 建 / update 改 / complete 完成或取消 / delete 删'), required: true },
-      id: { type: 'string', description: '任务 id（update/complete/delete）' },
+      id: { type: 'string', description: '已有任务的真实 id（update/complete/delete 必填）' },
       title: { type: 'string', description: '标题（create 必填）' },
       due: isoParam('截止时间（create 必填），如 2026-10-19T23:59:00+08:00'),
-      task_type: enumParam(TASK_TYPES, '类别，默认 other'),
+      task_type: enumParam(TASK_TYPES, '任务类型（固定枚举，非条目类别），默认 other'),
       priority: enumParam(PRIORITIES, '优先级，默认 medium'),
       description: { type: 'string', description: '备注；更新时传空字符串表示清除' },
-      completed: { type: 'boolean', description: 'complete 用，默认 true；false 表示撤销' },
+      completed: { type: 'boolean', description: '完成状态；complete 省略为 true，false 表示撤销完成' },
       entry_id: { type: 'string', description: '关联的日历条目 id，可省略' },
-      scope: enumParam(['today', 'week', 'overdue', 'all'], 'list 范围，默认 all'),
+      scope: enumParam(['today', 'week', 'overdue', 'all'], 'list 范围，默认 all；week 为从现在起未来 7 天，非自然周'),
       include_completed: { type: 'boolean', description: 'list 是否含已完成，默认 false' },
     },
     run: runTask,
@@ -163,25 +171,25 @@ const TOOLS = [
   },
   {
     name: 'sched_entry',
-    description: '查询或修改日历条目（会议/自习/运动等占时事项）。action 选操作；时间用带时区 ISO 8601。规则见 schedule skill。',
+    description: '查询或修改占用时间的日历条目。list 返回 entries/categories/termStart，创建/更新回显完整条目及 week/dayOfWeek；默认拒绝时间冲突，允许重叠须经用户确认。规则见 schedule skill。',
     parameters: {
       action: { ...enumParam(ENTRY_ACTIONS, 'list 查 / create 建 / update 改 / delete 删 / batch_create 批量建'), required: true },
-      id: { type: 'string', description: '条目 id（update/delete）' },
+      id: { type: 'string', description: '已有条目的真实 id（update/delete 必填）' },
       title: { type: 'string', description: '标题（create/batch_create 必填）' },
-      start: isoParam('开始时间（create 必填）；全天条目传当天日期'),
-      end: isoParam('结束时间（create 必填）；全天条目可省略'),
-      category: enumParam(ENTRY_CATEGORIES, '类别，默认 other'),
+      start: isoParam('带时区的开始时间（create 必填）；单日全天条目传 YYYY-MM-DD'),
+      end: isoParam('带时区的结束时间（普通 create 必填且晚于 start）；单日全天条目可省略'),
+      category: { type: 'string', description: '类别 id，默认 other；list 返回当前可用 categories' },
       description: { type: 'string', description: '备注；更新时传空字符串表示清除' },
       location: { type: 'string', description: '地点，可省略；空字符串清除' },
-      lock: { type: 'boolean', description: '只禁止日程表左键快捷拖动，默认 false；仍可编辑和删除' },
-      all_day: { type: 'boolean', description: '全天条目' },
+      lock: { type: 'boolean', description: '只禁止页面快捷拖动/缩放，默认 false；仍可工具改期、编辑和删除' },
+      all_day: { type: 'boolean', description: '单日全天条目，start 传 YYYY-MM-DD，按服务本地时区处理' },
       task_id: { type: 'string', description: '关联任务 id，可省略' },
-      allow_conflicts: { type: 'boolean', description: '允许重叠，默认 false' },
-      from: isoParam('list 窗口起点（含）'),
-      to: isoParam('list 窗口终点（不含）'),
+      allow_conflicts: { type: 'boolean', description: '经用户确认后允许时间重叠，默认 false；不覆盖已有条目；批量时作用于全部项' },
+      from: isoParam('list 查询窗口起点（含），带时区 ISO 8601；返回与窗口相交的条目'),
+      to: isoParam('list 查询窗口终点（不含），带时区 ISO 8601；省略边界则不限制该侧'),
       entries: {
         type: 'array',
-        description: 'batch_create 的条目数组，每项含 title/start/end 及可选字段',
+        description: 'batch_create 非空数组，每项用 create 字段（单日全天可省略 end）；allow_conflicts 只放顶层；逐项回执，仅重试失败项',
         items: { type: 'object', additionalProperties: true },
       },
     },
@@ -205,7 +213,11 @@ export function registerScheduleTools(ctx, service) {
       parameters: spec.parameters,
       output: {
         schema: OUTPUT,
-        render: (args, value) => [{ type: 'text', text: spec.render(args, value) }],
+        // Only rendered content reaches the model; the canonical value alone does not.
+        render: (args, value) => [
+          { type: 'text', text: `${spec.render(args, value)}\n` },
+          { type: 'text', text: JSON.stringify(value) },
+        ],
       },
       // Writes are deliberately not concurrency-safe: exclusive scheduling
       // serializes writes onto the shared domain.

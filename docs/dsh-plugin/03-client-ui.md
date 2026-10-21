@@ -175,7 +175,7 @@ useResource, useWorkspaces, usePanelInfo, useSessions, useSessionStatus, useSess
 
 ---
 
-## 4. 样式：只用主题 token
+## 4. 样式：shell 主题 token 与配置类别配色
 
 宿主负责主题：`@deepseek-ai/dsh-client-ui-theme` 拥有 `--dsw-*` 静态色阶、语义别名、排版、动效、阴影、滚动条与明暗偏好；`ui-layout` 把解析后的快照应用到文档。**插件必须用语义别名，不得另立全局主题**（`ctx.theme.register(definition)` 是"注册一套主题"，插件不该用）。
 
@@ -190,7 +190,7 @@ useResource, useWorkspaces, usePanelInfo, useSessions, useSessionStatus, useSess
 ### 4.2 硬性规则
 
 - **CSS Modules + `clsx`**（编译型插件）；**不得**引入组件库或 Tailwind。手写 bundle 没有 CSS Modules，就用 §2 的样式注入方式，类名带自己的前缀。
-- 颜色、排版、层级、动效一律用 `--dsw-alias-*`；(1) 禁止颜色字面量、(2) 禁止复制静态色板值、(3) 功能组件 CSS 禁止主题选择器。
+- shell 颜色、排版、层级、动效使用宿主 `--dsw-*` token；禁止复制静态 shell 色板，功能组件 CSS 禁止主题选择器。唯一颜色字面量例外是 `global.categories` 的用户配置 `#RRGGBB` accent：通过 `--bsch-block-color` 用于日历块和预览，小日历色点使用同一类别颜色。
 - 字号必须与行高成对；源码/终端/diff 文本不换行；滚动条用共享样式，**不要**自定义组件专用滚动条选择器。
 - 呈现规则写进 CSS；React 内联样式只能传组件局部自定义属性值，**不得**用它编码主题分支。
 - 中性 `--dsw-alias-border-*` 的平面边框/分割线一律 **0.5px**；虚线记号与状态色边框保持 1px。
@@ -313,6 +313,11 @@ ctx.slots.register({ name: 'main', key: 'schedule-calendar', locale: 'scheduleCo
 
 ## 8. 与旧 Vue 实现的对应关系
 
+当前类别 UI 读取 `snapshot.global.categories` 有序定义（稳定 id、可改名、`#RRGGBB` 颜色，默认七项见 `00` §3.3）。已有列表不恢复删除预设；`other` 固定名“其它”、不可删但可改色。设置页原生颜色选择器即时预览同款日历块，增改删后显式 `setCategories` 保存；删除确认说明已有条目改归 `other`。未保存草稿与普通 metadata 独立，错误、来源刷新、学期保存不覆盖草稿，导入后重读 metadata。
+
+编辑器、批量编辑器、周网格及小日历使用动态选项/名称/颜色；已打开编辑器和撤销恢复遇已删除类别时归 `other`，恢复失败展示可重试错误。单个与批量编辑器共用紧凑 `role="switch"`，单一标签“锁定（不可拖动）”，支持键盘，锁仅影响快捷移动/缩放。当前实现的离线 VM 测试不构成浏览器、主题或鼠标命中验证。
+
+
 迁移已完成；旧组件的**交互意图**（拖选新建、时间轴范围、撤销重做、任务筛选……）逐条清单与现状偏差见 `10-ui-parity-rework.md`，旧文件地图见 `00-architecture.md` §7。仍在生效的两条规则：不要改宿主 DOM（标题等由自己的组件渲染）；拖拽/撤销等交互状态放组件本地，写操作走 Host 服务方法。
 
 ---
@@ -325,7 +330,7 @@ ctx.slots.register({ name: 'main', key: 'schedule-calendar', locale: 'scheduleCo
 - [ ] 组件 props 来自 `selected.catalog`（`ownerProps` / `standardProps`）或 owner 的类型文件，没有猜。
 - [ ] **没有**传 `priority`；复用宿主 key 是**有意**遮蔽。
 - [ ] `sidebar.panellist` 的 `id` 与 `main` 的 `key` **完全一致**。
-- [ ] 样式只用 `--dsw-alias-*` / `--dsw-radius-*` / `--dsw-elevation-*`；无颜色字面量；无主题选择器；边框 0.5px；圆角用 token。
+- [ ] shell 样式使用 `--dsw-alias-*` / `--dsw-radius-*` / `--dsw-elevation-*`；类别配置的 `#RRGGBB` accent 是唯一颜色字面量例外；无主题选择器；边框 0.5px；圆角用 token。
 - [ ] 明暗两套主题都读过；控制台无 `slot entry crashed`。
 - [ ] 文案走 locale；组件卸载后无残留样式/监听/定时器。
 - [ ] 写操作只有一条路径（Host 服务方法），UI 与工具没有各写一套。

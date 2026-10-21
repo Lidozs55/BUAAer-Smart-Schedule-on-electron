@@ -57,8 +57,9 @@ export function dayOfWeek(date) {
  */
 export function termWeek(termStart, date) {
   if (!termStart) return null
-  const start = parseDate(mondayOf(termStart)).getTime()
-  const today = parseDate(mondayOf(date)).getTime()
+  // Compare calendar days, not local instants whose distance changes at DST.
+  const start = Date.parse(`${mondayOf(termStart)}T00:00:00Z`)
+  const today = Date.parse(`${mondayOf(date)}T00:00:00Z`)
   const week = Math.floor((today - start) / (7 * DAY_MS)) + 1
   return week >= 1 ? week : null
 }

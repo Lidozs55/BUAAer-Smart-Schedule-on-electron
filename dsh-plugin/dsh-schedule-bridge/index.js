@@ -41,7 +41,6 @@ const NOTICE_TTL_MS = 30 * 60_000
 const REPORT_INTERVAL_MS = 5 * 60_000
 
 const TYPE_LABELS = { homework: '作业', exam: '考试', lecture: '听课', other: '截止事项' }
-const ENTRY_LABELS = { homework: '作业', exam: '考试', meeting: '会议', study: '学习', sports: '运动', other: '日程' }
 
 /** `YYYY-MM-DD` local day key (bundle-local; cannot import the main plugin). */
 const dayKey = date => {
@@ -66,7 +65,7 @@ export function apply(ctx, config) {
   // bridge keeps no memory beyond the `raised` set.
   const noticeFor = reminder => {
     if (reminder.kind === 'entry') {
-      const label = ENTRY_LABELS[reminder.category] ?? ENTRY_LABELS.other
+      const label = service.getMeta().categories.find(category => category.id === reminder.category)?.name ?? '日程'
       const when = reminder.allDay
         ? `${reminder.start.slice(0, 10)} 全天`
         : `将于 ${shortTime(reminder.start)} 开始`

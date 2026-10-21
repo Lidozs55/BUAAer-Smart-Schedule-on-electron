@@ -39,6 +39,7 @@ function operations(service) {
     deleteTask: body => service.deleteTask(body.id),
     clearAllData: () => service.clearAllData(),
     setMeta: body => service.setMeta(body.patch),
+    setCategories: body => service.setCategories(body.categories),
     /** Full-domain dump — the importable counterpart of the settings export. */
     export: () => ({
       global: service.getMeta(),

@@ -2,7 +2,7 @@
  * Full-domain import for the shape this plugin's own export produces
  * (`settings.section` → export JSON). Round-tripping an export must work.
  */
-import { PRIORITIES } from './model.js'
+import { cloneCategories, PRIORITIES } from './model.js'
 
 const priorityOf = value => (PRIORITIES.includes(value) ? value : 'medium')
 
@@ -17,7 +17,7 @@ export async function importSchedulePayload(service, payload) {
   if (!isObject(payload)) {
     throw Object.assign(new Error('导入载荷不是对象'), { code: 'invalid_input' })
   }
-  const unsupported = Object.keys(payload).filter(key => !['global', 'entries', 'tasks'].includes(key))
+  const unsupported = Object.keys(payload).filter(key => !['global', 'entries', 'tasks', 'exportedAt'].includes(key))
   if (unsupported.length > 0) {
     throw Object.assign(new Error(`不支持的导入字段：${unsupported.join('、')}；请使用当前条目格式`), { code: 'invalid_input' })
   }
@@ -29,6 +29,17 @@ export async function importSchedulePayload(service, payload) {
   const counts = {
     entries: { total: 0, created: 0, skipped: 0 },
     tasks: { total: 0, created: 0, skipped: 0 },
+  }
+
+  let categoryMap = new Map([['other', 'other']])
+  if (payload.global?.categories !== undefined) {
+    categoryMap = await service.importCategories(payload.global.categories)
+  } else {
+    // Backups predating definitions use the original built-in vocabulary.
+    const currentIds = new Set(service.getMeta().categories.map(category => category.id))
+    for (const category of cloneCategories()) {
+      categoryMap.set(category.id, currentIds.has(category.id) ? category.id : 'other')
+    }
   }
 
   const termStart = payload.global?.termStart
@@ -56,7 +67,7 @@ export async function importSchedulePayload(service, payload) {
       lock: entry.lock ?? false,
       source: entry.source,
       sourceKey: entry.sourceKey,
-      category: entry.category ?? 'other',
+      category: categoryMap.get(entry.category) ?? 'other',
       start,
       end: entry.end,
       allDay: entry.allDay === true || undefined,

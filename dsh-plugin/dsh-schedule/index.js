@@ -58,11 +58,12 @@ export async function apply(ctx, config) {
         const meta = service.getMeta()
         const week = termWeek(meta.termStart, today())
         const teachingWeek = week === null
-          ? '学期起点未配置，教学周未知'
+          ? `教学周未知（${meta.termStart ? `学期起点 ${meta.termStart}` : '未配置学期起点'}）`
           : `本学期第 ${week} 教学周（起点 ${meta.termStart}）`
         return [
-          `日程插件已启用；当前为${teachingWeek}。`,
-          '读写用 sched_task / sched_entry（action 选操作），时间为带时区 ISO 8601；冲突可用 allow_conflicts=true 覆盖。',
+          `日程主插件已启用；当前${teachingWeek}。`,
+          '任务/截止事项用 sched_task，占时安排用 sched_entry；操作规则见 schedule skill，参数以当前工具 schema 为准。',
+          '日常操作仅用日程工具及其回执，不读取或搜索内部存储、配置或凭据；冲突须经用户确认后才允许重叠。',
         ].join('\n')
       },
     }), 'schedule: prompt section')

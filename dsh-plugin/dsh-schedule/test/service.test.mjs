@@ -82,7 +82,7 @@ test('full-term expansion honors sparse weeks, moved and canceled exceptions wit
   ], '2026-09-07')
   assert.deepEqual(rows.map(row => row.start), ['2026-09-07T08:00:00+08:00', '2026-10-01T10:00:00+08:00'])
   assert.equal(rows[1].location, '102')
-  assert.ok(rows.every(row => row.lock && row.category === 'study' && !('teacher' in row)))
+  assert.ok(rows.every(row => row.lock && row.category === 'course' && !('teacher' in row)))
   assert.throws(() => materializeEntries([rule], [], ''), /学期/)
 })
 
@@ -158,5 +158,5 @@ test('snapshot and new export import no longer expose separate teaching types', 
   assert.equal('occurrences' in snapshot, false)
   assert.equal(service.weekOccurrences, undefined)
   assert.equal(service.replaceCourses, undefined)
-  await assert.rejects(service.createEntry(input({ category: 'course' })), /category/)
+  assert.equal((await service.createEntry(input({ category: 'course' }), { allowConflicts: true })).category, 'course')
 })

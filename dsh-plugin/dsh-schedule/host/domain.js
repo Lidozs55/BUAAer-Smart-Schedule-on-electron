@@ -9,7 +9,7 @@
 import { z } from 'zod'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 
-import { ENTRY_CATEGORIES, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES } from './model.js'
+import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
 
 const isoDateTime = z.string().regex(ISO_DATETIME_RE)
 
@@ -21,10 +21,21 @@ const isoDateTime = z.string().regex(ISO_DATETIME_RE)
  * source owns one JSON string under its own key. The schedule core never
  * interprets those values, so adding a source needs no schema change.
  */
+export const categoriesSchema = z.array(z.object({
+  id: z.string(), name: z.string(), color: z.string(),
+})).transform((value, ctx) => {
+  try { return validateCategories(value) } catch (error) {
+    ctx.addIssue({ code: 'custom', message: error.message })
+    return z.NEVER
+  }
+})
+
 const globalSchema = z.object({
   /** Monday of teaching week 1, `YYYY-MM-DD`; '' until configured. */
   termStart: z.string().regex(/^(\d{4}-\d{2}-\d{2})?$/),
   entryModelVersion: z.literal(2),
+  categoryModelVersion: z.literal(1),
+  categories: categoriesSchema.default(cloneCategories),
   /** Per-source adapter state: source id → JSON string. */
   sourceState: z.record(z.string(), z.string()).default({}),
 })
@@ -52,7 +63,7 @@ const entrySchema = z.object({
   lock: z.boolean(),
   source: z.string().regex(SOURCE_ID_RE).nullable().optional(),
   sourceKey: z.string().nullable().optional(),
-  category: z.enum(ENTRY_CATEGORIES),
+  category: z.string().min(1),
   start: isoDateTime,
   end: isoDateTime,
   /** Whole-day flag; start/end then carry the day at midnight. */
@@ -71,6 +82,6 @@ export const scheduleDomainSpec = defineDomain({
   },
   global: {
     schema: globalSchema,
-    initial: { termStart: '', sourceState: {}, entryModelVersion: 2 },
+    initial: { termStart: '', sourceState: {}, entryModelVersion: 2, categoryModelVersion: 1, categories: cloneCategories() },
   },
 })

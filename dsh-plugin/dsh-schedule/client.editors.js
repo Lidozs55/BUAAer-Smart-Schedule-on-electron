@@ -15,7 +15,7 @@ window.__ModuleLoader__.load({
     const { useState, useMemo } = React
     const { Modal, ConfirmDialog } = core
 
-    const CATEGORIES = ['homework', 'exam', 'meeting', 'study', 'sports', 'other']
+    const { categoriesOrDefault, categoryId, CategoryPreview, currentCategoryInputs } = core
 
     /** `YYYY-MM-DDTHH:mm` for `datetime-local` inputs, browser-local wall time. */
     const toLocalInput = iso => {
@@ -31,6 +31,7 @@ window.__ModuleLoader__.load({
     function EventEditor(props) {
       const { t, initial, api, undoApi, refresh, onClose, onSaved } = props
       const draft = props.draft ?? {}
+      const categories = categoriesOrDefault(props.categories)
       const [title, setTitle] = useState(initial?.title ?? '')
       const [category, setCategory] = useState(initial?.category ?? 'other')
       const [start, setStart] = useState(toLocalInput(initial?.start ?? draft.start ?? new Date()))
@@ -50,7 +51,7 @@ window.__ModuleLoader__.load({
         setError(null)
         const input = {
           title,
-          category,
+          category: categoryId(category, categories),
           description,
           location: location.trim() === '' ? null : location,
           lock,
@@ -70,7 +71,7 @@ window.__ModuleLoader__.load({
                 label: 'create',
                 undo: async () => { await api.deleteEntry(liveId) ; await refresh() },
                 redo: async () => {
-                  const created = await api.createEntry(input, { allowConflicts: true })
+                  const created = await api.createEntry((await currentCategoryInputs(api, [input]))[0], { allowConflicts: true })
                   liveId = created.id
                   await refresh()
                 },
@@ -87,8 +88,8 @@ window.__ModuleLoader__.load({
               }
               undoApi.push({
                 label: 'update',
-                undo: async () => { await api.updateEntry(initial.id, before, { allowConflicts: true }) ; await refresh() },
-                redo: async () => { await api.updateEntry(initial.id, input, { allowConflicts: true }) ; await refresh() },
+                undo: async () => { await api.updateEntry(initial.id, (await currentCategoryInputs(api, [before]))[0], { allowConflicts: true }) ; await refresh() },
+                redo: async () => { await api.updateEntry(initial.id, (await currentCategoryInputs(api, [input]))[0], { allowConflicts: true }) ; await refresh() },
               })
             }
           }
@@ -111,7 +112,7 @@ window.__ModuleLoader__.load({
             undoApi.push({
               label: 'delete',
               undo: async () => {
-                const created = await api.createEntry({
+                const created = await api.createEntry((await currentCategoryInputs(api, [{
                   title: initial.title,
                   category: initial.category,
                   description: initial.description,
@@ -123,7 +124,7 @@ window.__ModuleLoader__.load({
                   ...(initial.allDay !== undefined ? { allDay: initial.allDay } : {}),
                   ...(initial.source !== undefined ? { source: initial.source } : {}),
                   ...(initial.sourceKey !== undefined ? { sourceKey: initial.sourceKey } : {}),
-                }, { allowConflicts: true })
+                }]))[0], { allowConflicts: true })
                 liveId = created.id
                 await refresh()
               },
@@ -160,9 +161,9 @@ window.__ModuleLoader__.load({
                 onChange: e => setTitle(e.target.value),
               })),
               field(t('entry.category'), h('select', {
-                className: 'bsch-select', value: category,
+                className: 'bsch-select', value: categoryId(category, categories),
                 onChange: e => setCategory(e.target.value),
-              }, CATEGORIES.map(cat => h('option', { key: cat, value: cat }, t('cat.' + cat))))),
+              }, categories.map(cat => h('option', { key: cat.id, value: cat.id }, cat.name)))),
               field(t('entry.start'), h('input', {
                 className: 'bsch-input', type: 'datetime-local', value: start,
                 onChange: e => setStart(e.target.value),
@@ -171,7 +172,8 @@ window.__ModuleLoader__.load({
                 className: 'bsch-input', type: 'datetime-local', value: end,
                 onChange: e => setEnd(e.target.value),
               })),
-              entryDetails({ t, location, setLocation, lock, setLock }),
+              h(CategoryPreview, { category: categoryId(category, categories), categories, title }),
+               entryDetails({ t, location, setLocation, lock, setLock }),
               field(t('entry.description'), h('textarea', {
                 className: 'bsch-textarea', value: description, rows: 2,
                 onChange: e => setDescription(e.target.value),
@@ -196,11 +198,17 @@ window.__ModuleLoader__.load({
           className: 'bsch-input', value: location,
           onChange: event => setLocation(event.target.value),
         })),
-        field(t('entry.lock'), h('input', {
-          type: 'checkbox', checked: lock,
-          onChange: event => setLock(event.target.checked),
-        })),
-        h('div', { className: 'bsch-hint' }, t('entry.lockHint')))
+        h('button', {
+          className: 'bsch-lock-switch', type: 'button', role: 'switch',
+          'aria-checked': lock, 'aria-label': t('entry.lock'),
+          onClick: () => setLock(value => !value),
+          onKeyDown: event => {
+            if (event.key !== 'Enter' && event.key !== ' ') return
+            event.preventDefault() // suppress the native synthesized click
+            if (!event.repeat) setLock(value => !value)
+          },
+        }, h('span', { className: 'bsch-switch-track', 'aria-hidden': true },
+          h('span', { className: 'bsch-switch-thumb' })), t('entry.lock')))
     }
 
     /** `datetime-local` values are browser-local wall times; emit them
@@ -211,7 +219,8 @@ window.__ModuleLoader__.load({
     const DAY_MS = 86_400_000
     const BATCH_DEFAULT_DAYS = [1, 2, 3, 4, 5] // Mon..Fri
 
-    function BatchEditor({ t, api, undoApi, refresh, onClose }) {
+    function BatchEditor({ t, api, undoApi, refresh, onClose, categories: configuredCategories }) {
+      const categories = categoriesOrDefault(configuredCategories)
       const [title, setTitle] = useState('')
       const [repeat, setRepeat] = useState('daily')
       const [weekdays, setWeekdays] = useState(BATCH_DEFAULT_DAYS)
@@ -253,7 +262,7 @@ window.__ModuleLoader__.load({
         setError(null)
         const inputs = targetDays.map(day => ({
           title,
-          category,
+          category: categoryId(category, categories),
           description,
           location: location.trim() === '' ? null : location,
           lock,
@@ -277,8 +286,15 @@ window.__ModuleLoader__.load({
                 await refresh()
               },
               redo: async () => {
-                const created = await api.batchCreateEntries(accepted, { allowConflicts: true })
-                liveIds = created.filter(row => row.ok).map(row => row.id)
+                const created = await api.batchCreateEntries(await currentCategoryInputs(api, accepted), { allowConflicts: true })
+                const restoredIds = created.filter(row => row.ok).map(row => row.id)
+                const failed = created.find(row => !row.ok)
+                if (failed) {
+                  if (restoredIds.length) await api.deleteEntry(restoredIds)
+                  await refresh()
+                  throw new Error(failed.message ?? t('entry.restoreFailed'))
+                }
+                liveIds = restoredIds
                 await refresh()
               },
             })
@@ -335,9 +351,10 @@ window.__ModuleLoader__.load({
               onChange: e => setEndTime(e.target.value),
             }))),
           field(t('entry.category'), h('select', {
-            className: 'bsch-select', value: category,
+            className: 'bsch-select', value: categoryId(category, categories),
             onChange: e => setCategory(e.target.value),
-          }, CATEGORIES.map(cat => h('option', { key: cat, value: cat }, t('cat.' + cat))))),
+          }, categories.map(cat => h('option', { key: cat.id, value: cat.id }, cat.name)))),
+          h(CategoryPreview, { category: categoryId(category, categories), categories, title }),
           entryDetails({ t, location, setLocation, lock, setLock }),
           field(t('entry.description'), h('textarea', {
             className: 'bsch-textarea', value: description, rows: 2,

@@ -1,5 +1,5 @@
 /**
- * Shared client kernel: locale dictionaries, the category→token map, the
+ * Shared client kernel: locale dictionaries, configured category helpers, the
  * `/api` client, data hooks, and the small UI atoms every page reuses.
  */
 window.__ModuleLoader__.load({
@@ -32,8 +32,8 @@ window.__ModuleLoader__.load({
       'strip.upcoming': '24h 内到期', 'strip.empty': '近 24 小时没有到期任务',
       'grid.newEvent': '新建事件', 'grid.jumpTo': '跳到这天',
       'entry.title': '标题', 'entry.category': '类别', 'entry.start': '开始', 'entry.end': '结束',
-      'entry.location': '地点', 'entry.lock': '禁止鼠标快捷拖动',
-      'entry.lockHint': '仅限制左键拖动时间和时长；仍可编辑、删除或使用右键菜单。',
+      'entry.location': '地点', 'entry.lock': '锁定（不可拖动）',
+      'entry.restoreFailed': '恢复条目失败，请重试撤销或重做。',
       'entry.allDay': '全天', 'entry.description': '备注', 'entry.delete': '删除',
       'entry.save': '保存', 'entry.cancel': '取消', 'entry.edit': '编辑条目', 'entry.create': '新建条目',
       'task.title': '标题', 'task.type': '类别', 'task.due': '截止', 'task.priority': '优先级',
@@ -57,6 +57,13 @@ window.__ModuleLoader__.load({
       'clipboard.sent': '已发送到新会话',
       'clipboard.sendFail': '发送失败：{message}',
       'settings.termStart': '学期起点（第一周周一）',
+      'settings.categories': '类别与颜色', 'settings.addCategory': '新增类别',
+      'settings.saveCategories': '保存类别', 'settings.newCategory': '新类别',
+      'settings.categoryName': '类别名称', 'settings.categoryColor': '颜色',
+      'settings.categoryHint': '编辑后点击保存；删除类别的已有条目会归入其它。',
+      'settings.deleteCategoryHint': '保存删除“{name}”后，已有条目会重新归类至其它。',
+      'settings.otherProtected': '其它不可删除', 'settings.categoryNameRequired': '类别名称不能为空',
+      'settings.unsaved': '有未保存修改',
       'settings.termHint': '用于计算教学周；留空则不显示周次。',
       'settings.saved': '已保存',
       'settings.dataTitle': '数据', 'settings.export': '导出 JSON', 'settings.import': '导入 JSON',
@@ -76,8 +83,8 @@ window.__ModuleLoader__.load({
       'notify.entryAllDay': '「{title}」{date} 全天{location}',
       'notify.toastHint': '开启浏览器通知可在页面切到后台时收到提醒',
       'state.error': '出错了：{message}', 'state.loading': '加载中…', 'state.retry': '重试',
-      'cat.homework': '作业', 'cat.exam': '考试', 'cat.meeting': '会议',
-      'cat.study': '学习', 'cat.sports': '运动', 'cat.other': '其他',
+      'cat.course': '课程', 'cat.homework': '作业', 'cat.exam': '考试', 'cat.meeting': '会议',
+      'cat.study': '学习', 'cat.sports': '运动', 'cat.other': '其它',
       'type.homework': '作业', 'type.exam': '考试', 'type.lecture': '听课', 'type.other': '其他',
       'prio.high': '高', 'prio.medium': '中', 'prio.low': '低',
     }
@@ -101,8 +108,8 @@ window.__ModuleLoader__.load({
       'strip.upcoming': 'Due in 24h', 'strip.empty': 'Nothing due in the next 24 hours',
       'grid.newEvent': 'New event', 'grid.jumpTo': 'Jump to this day',
       'entry.title': 'Title', 'entry.category': 'Category', 'entry.start': 'Start', 'entry.end': 'End',
-      'entry.location': 'Location', 'entry.lock': 'Prevent quick mouse dragging',
-      'entry.lockHint': 'Only blocks left-button time and duration dragging; editing, deletion, and context actions stay available.',
+      'entry.location': 'Location', 'entry.lock': 'Locked (no dragging)',
+      'entry.restoreFailed': 'Could not restore entries; retry undo or redo.',
       'entry.allDay': 'All day', 'entry.description': 'Notes', 'entry.delete': 'Delete',
       'entry.save': 'Save', 'entry.cancel': 'Cancel', 'entry.edit': 'Edit entry', 'entry.create': 'New entry',
       'task.title': 'Title', 'task.type': 'Type', 'task.due': 'Due', 'task.priority': 'Priority',
@@ -126,6 +133,13 @@ window.__ModuleLoader__.load({
       'clipboard.sent': 'Sent to a new session',
       'clipboard.sendFail': 'Send failed: {message}',
       'settings.termStart': 'Term start (Monday of week 1)',
+      'settings.categories': 'Categories and colors', 'settings.addCategory': 'Add category',
+      'settings.saveCategories': 'Save categories', 'settings.newCategory': 'New category',
+      'settings.categoryName': 'Category name', 'settings.categoryColor': 'Color',
+      'settings.categoryHint': 'Save after editing; entries in deleted categories move to Other.',
+      'settings.deleteCategoryHint': 'After saving the deletion of “{name}”, existing entries move to Other.',
+      'settings.otherProtected': 'Other cannot be deleted', 'settings.categoryNameRequired': 'Category name is required',
+      'settings.unsaved': 'Unsaved changes',
       'settings.termHint': 'Used to compute teaching weeks; leave empty to hide the week badge.',
       'settings.saved': 'Saved',
       'settings.dataTitle': 'Data', 'settings.export': 'Export JSON', 'settings.import': 'Import JSON',
@@ -145,25 +159,43 @@ window.__ModuleLoader__.load({
       'notify.entryAllDay': '"{title}" is all day on {date}{location}',
       'notify.toastHint': 'Enable browser notifications to get reminders while the page is in the background',
       'state.error': 'Error: {message}', 'state.loading': 'Loading…', 'state.retry': 'Retry',
-      'cat.homework': 'Homework', 'cat.exam': 'Exam', 'cat.meeting': 'Meeting',
+      'cat.course': 'Course', 'cat.homework': 'Homework', 'cat.exam': 'Exam', 'cat.meeting': 'Meeting',
       'cat.study': 'Study', 'cat.sports': 'Sports', 'cat.other': 'Other',
       'type.homework': 'Homework', 'type.exam': 'Exam', 'type.lecture': 'Lecture', 'type.other': 'Other',
       'prio.high': 'High', 'prio.medium': 'Medium', 'prio.low': 'Low',
     }
 
-    // The one place entry categories map to theme tokens (§4.3). The
-    // neutral categories brighten the idle gray toward label-primary:
-    // raw idle gray sinks into dark backgrounds (user report 2026-10-19),
-    // while the 16% block fill keeps white text readable.
-    const NEUTRAL_TOKEN =
-      'color-mix(in srgb, var(--dsw-alias-state-idle-primary) 45%, var(--dsw-alias-label-primary))'
-    const CATEGORY_TOKEN = {
-      homework: 'var(--dsw-alias-state-warn-primary)',
-      exam: 'var(--dsw-alias-state-error-primary)',
-      meeting: NEUTRAL_TOKEN,
-      study: NEUTRAL_TOKEN,
-      sports: 'var(--dsw-alias-state-success-primary)',
-      other: NEUTRAL_TOKEN,
+    // Defaults are only a bootstrap/legacy fallback, never merged into a
+    // configured list: a deleted preset must stay deleted.
+    const DEFAULT_CATEGORIES = [
+      { id: 'course', name: '课程', color: '#3B82F6' },
+      { id: 'homework', name: '作业', color: '#F59E0B' },
+      { id: 'exam', name: '考试', color: '#EF4444' },
+      { id: 'meeting', name: '会议', color: '#A855F7' },
+      { id: 'study', name: '学习', color: '#06B6D4' },
+      { id: 'sports', name: '运动', color: '#22C55E' },
+      { id: 'other', name: '其它', color: '#64748B' },
+    ]
+    const categoriesOrDefault = categories => Array.isArray(categories) ? categories : DEFAULT_CATEGORIES
+    const categoryId = (id, categories) => categoriesOrDefault(categories).some(cat => cat.id === id) ? id : 'other'
+    const categoryInfo = (id, categories) => {
+      const list = categoriesOrDefault(categories)
+      return list.find(cat => cat.id === id) ?? list.find(cat => cat.id === 'other') ?? DEFAULT_CATEGORIES[6]
+    }
+    const categoryName = (id, categories) => categoryInfo(id, categories).name
+    const categoryColor = (id, categories) => categoryInfo(id, categories).color
+    const categoryStyle = (id, categories) => ({ '--bsch-block-color': categoryColor(id, categories) })
+    function CategoryPreview({ category, categories, title }) {
+      return h('div', { className: 'bsch-block bsch-category-preview', style: categoryStyle(category, categories) },
+        h('div', { className: 'bsch-block-title' }, title || categoryName(category, categories)),
+        h('div', { className: 'bsch-block-sub' }, '09:00–10:00'))
+    }
+
+    // Undo closures outlive their editor and its category snapshot. Resolve
+    // against current server metadata before recreating/restoring old inputs.
+    async function currentCategoryInputs(api, inputs) {
+      const categories = typeof api.snapshot === 'function' ? (await api.snapshot()).global?.categories : undefined
+      return inputs.map(input => ({ ...input, category: categoryId(input.category, categories) }))
     }
 
     // -- time helpers (the one canonical copy; chunks import from here) --
@@ -240,6 +272,7 @@ window.__ModuleLoader__.load({
         setTaskCompleted: (id, completed) => post('setTaskCompleted', { id, completed }),
         deleteTask: id => post('deleteTask', { id }),
         setMeta: patch => post('setMeta', { patch }),
+        setCategories: categories => post('setCategories', { categories }),
         exportData: () => post('export', {}),
         importData: payload => post('import', { payload }),
         clearAllData: () => post('clearAllData', {}),
@@ -318,6 +351,7 @@ window.__ModuleLoader__.load({
      *  (or empty) stack and the earlier operations became unreachable. */
     function useUndo(refresh) {
       const stacksRef = useRef({ undo: [], redo: [] })
+      const [error, setError] = useState(null)
       const [, bump] = useState(0) // re-render for canUndo/canRedo only
       const busy = useRef(false)
       const commit = useCallback(next => {
@@ -334,6 +368,7 @@ window.__ModuleLoader__.load({
         const entry = from[from.length - 1]
         if (entry === undefined) return
         busy.current = true
+        setError(null)
         try {
           await entry[direction]()
           const current = stacksRef.current
@@ -350,6 +385,8 @@ window.__ModuleLoader__.load({
             ? { undo: remove(current.undo), redo: [...current.redo, entry].slice(-5) }
             : { undo: [...current.undo, entry].slice(-5), redo: remove(current.redo) })
           await refresh()
+        } catch (cause) {
+          setError(cause.message ?? String(cause))
         } finally {
           busy.current = false
         }
@@ -358,6 +395,7 @@ window.__ModuleLoader__.load({
         push,
         undo: useCallback(() => void step('undo'), [step]),
         redo: useCallback(() => void step('redo'), [step]),
+        error,
         canUndo: stacksRef.current.undo.length > 0,
         canRedo: stacksRef.current.redo.length > 0,
       }
@@ -391,7 +429,8 @@ window.__ModuleLoader__.load({
 
     return {
       React, h, useState, useEffect, useRef, useCallback,
-      zh, en, CATEGORY_TOKEN,
+      DATA_CHANGED_EVENT,
+      zh, en, DEFAULT_CATEGORIES, categoriesOrDefault, categoryId, categoryName, categoryColor, categoryStyle, CategoryPreview, currentCategoryInputs,
       pad2, dateKey, dateToZonedIso, addDays, zonedAt,
       createApi, ApiError, useScheduleData, useUndo, notifyDataChanged,
       Modal, ConfirmDialog, field,

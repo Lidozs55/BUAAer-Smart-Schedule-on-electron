@@ -51,7 +51,7 @@ export async function runSync({ service, jw = { ssoLogin, fetchSchedule, fetchEx
     examFailure = error.message
   }
   const examEntries = examDrafts?.entries ?? service.listEntries()
-    .filter(entry => entry.source === SOURCE_ID && entry.category === 'exam')
+    .filter(entry => entry.source === SOURCE_ID && entry.sourceKey?.startsWith('exam:'))
     .map(({ title, description, location, start, end, category, lock, allDay, sourceKey }) =>
       ({ title, description, location, start, end, category, lock, allDay, sourceKey }))
   const entries = await service.replaceSourceEntries(SOURCE_ID, [...timetable.entries, ...examEntries])

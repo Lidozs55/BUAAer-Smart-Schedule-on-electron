@@ -1,3 +1,5 @@
+import { cloneCategories } from './model.js'
+
 /** One-time conversion of persisted weekly rules into dated entries. */
 const weeksOf = value => {
   if (!/^\d{1,2}(-\d{1,2})?(,\d{1,2}(-\d{1,2})?)*$/.test(value)) throw new Error(`无效周次：${value}`)
@@ -34,7 +36,7 @@ export function materializeEntries(rules, overrides, termStart) {
     const row = {
       id: `imported-${key}`, title: override?.courseName ?? rule.courseName,
       description: null, location: (override?.classroom ?? rule.classroom) || null,
-      category: 'study', lock: true, source: 'buaa',
+      category: 'course', lock: true, source: 'buaa',
       sourceKey: `teaching:${rule.courseName}:${day}:${rule.startTime}`,
       start: override?.start ?? `${day}T${rule.startTime}:00+08:00`,
       end: override?.end ?? `${day}T${rule.endTime}:00+08:00`,
@@ -78,9 +80,10 @@ export async function migrateEntryData(domain, validateEntry = row => row) {
   const generated = materializeEntries(rules, overrides, global.termStart)
   const existing = [...entries.entries()].map(([, row]) => validateEntry({
     ...row, location: row.location ?? null, lock: row.lock ?? false,
-    category: row.category === 'course' ? 'study' : row.category,
+    category: row.category,
   }))
-  const validated = generated.map(validateEntry)
+  const ids = new Set(cloneCategories(global.categories).map(category => category.id))
+  const validated = generated.map(row => validateEntry({ ...row, category: ids.has(row.category) ? row.category : 'other' }))
   for (const row of existing) await entries.put(row.id, row)
   const persistedKeys = new Set(existing.filter(row => row.source === 'buaa').map(row => row.sourceKey))
   for (const row of validated) {
@@ -97,15 +100,35 @@ export async function migrateEntryData(domain, validateEntry = row => row) {
   return { generated: generated.length }
 }
 
+/** Independent marker: entry-model migration may already have completed. */
+export async function migrateCategoryData(domain, validateEntry = row => row) {
+  const global = domain.global.get()
+  const categories = cloneCategories(global.categories)
+  const ids = new Set(categories.map(category => category.id))
+  const entries = domain.table('entries')
+  const rows = [...entries.entries()].map(([, row]) => {
+    let category = row.category
+    if (global.categoryModelVersion !== 1 && row.source === 'buaa'
+      && row.sourceKey?.startsWith('teaching:') && category === 'study') category = 'course'
+    return validateEntry({ ...row, category: ids.has(category) ? category : 'other' })
+  })
+  for (const row of rows) await entries.put(row.id, row)
+  await domain.global.set({ ...global, categories, categoryModelVersion: 1 })
+}
+
 export async function openScheduleDomain(storageDomain) {
-  const { scheduleDomainSpec } = await import('./domain.js')
+  const { scheduleDomainSpec, categoriesSchema } = await import('./domain.js')
   const { z } = await import('zod')
   const { domainTable } = await import('@deepseek-ai/dsh-storage-domain')
   const raw = domainTable(z.record(z.string(), z.unknown()))
   const transitional = {
     ...scheduleDomainSpec,
     global: {
-      schema: z.object({ termStart: z.string(), sourceState: z.record(z.string(), z.string()).default({}), entryModelVersion: z.number().optional() }),
+      schema: z.object({
+        termStart: z.string(), sourceState: z.record(z.string(), z.string()).default({}),
+        entryModelVersion: z.number().optional(), categoryModelVersion: z.number().optional(),
+        categories: categoriesSchema.optional(),
+      }),
       initial: { termStart: '', sourceState: {} },
     },
     tables: { ...scheduleDomainSpec.tables, entries: raw, courses: raw, course_overrides: raw },
@@ -114,6 +137,9 @@ export async function openScheduleDomain(storageDomain) {
   try {
     if (domain.global.get().entryModelVersion !== 2) {
       await migrateEntryData(domain, row => scheduleDomainSpec.tables.entries.valueSchema.parse(row))
+    }
+    if (domain.global.get().categoryModelVersion !== 1 || domain.global.get().categories === undefined) {
+      await migrateCategoryData(domain, row => scheduleDomainSpec.tables.entries.valueSchema.parse(row))
     }
   } finally {
     await domain.close()

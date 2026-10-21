@@ -66,6 +66,7 @@ async function clientHarness() {
 const nodes = tree => !tree || typeof tree !== 'object' ? [] : [tree, ...tree.children.flatMap(nodes)]
 const find = (tree, predicate) => nodes(tree).find(predicate)
 const control = (tree, label) => {
+  if (label === 'entry.lock') return find(tree, node => node.props.role === 'switch')
   const field = find(tree, node => node.props.className === 'bsch-field' && node.children[0]?.children[0] === label)
   assert.ok(field, `missing field ${label}`)
   return field.children[1]
@@ -81,16 +82,17 @@ const entry = (id, lock = false) => ({
   start: new Date(2026, 9, 21, 9).toISOString(), end: new Date(2026, 9, 21, 10).toISOString(), description: 'Notes',
 })
 
-test('generic client exposes only six entry categories and no occurrence APIs/editor', async () => {
+test('generic client bootstraps seven categories without occurrence APIs/editor', async () => {
   const client = await clientHarness()
   const core = client.module('core')
-  assert.deepEqual(Object.keys(core.CATEGORY_TOKEN), ['homework', 'exam', 'meeting', 'study', 'sports', 'other'])
+  assert.deepEqual(Array.from(core.DEFAULT_CATEGORIES, category => category.id), ['course', 'homework', 'exam', 'meeting', 'study', 'sports', 'other'])
+   assert.equal(core.categoryColor('course'), '#3B82F6')
   assert.equal(core.zh['cat.study'], '学习')
   assert.equal(core.createApi(() => {}).saveCourseOccurrence, undefined)
   assert.equal(core.createApi(() => {}).resetCourseOccurrence, undefined)
   assert.equal(client.module('editors').CourseEditor, undefined)
   for (const dictionary of [core.zh, core.en]) {
-    assert.equal(Object.keys(dictionary).some(key => /course|classTitle|classBody/.test(key)), false)
+    assert.equal(Object.keys(dictionary).some(key => /classTitle|classBody/.test(key)), false)
   }
 })
 
@@ -103,10 +105,10 @@ test('entry creation defaults unlocked and submits location/lock from shared con
     onClose() {}, onSaved() {},
   }
   let tree = client.render(EventEditor, props)
-  assert.equal(control(tree, 'entry.lock').props.checked, false)
+  assert.equal(control(tree, 'entry.lock').props['aria-checked'], false)
   control(tree, 'entry.title').props.onChange({ target: { value: 'New entry' } })
   control(tree, 'entry.location').props.onChange({ target: { value: 'Library' } })
-  control(tree, 'entry.lock').props.onChange({ target: { checked: true } })
+  control(tree, 'entry.lock').props.onClick()
   tree = client.render(EventEditor, props)
   button(tree, 'entry.save').props.onClick()
   await settle()
@@ -125,9 +127,9 @@ test('entry edit undo restores nullable location and lock, clearing location sen
   }
   let tree = client.render(EventEditor, props)
   assert.equal(control(tree, 'entry.location').props.value, initial.location)
-  assert.equal(control(tree, 'entry.lock').props.checked, true)
+  assert.equal(control(tree, 'entry.lock').props['aria-checked'], true)
   control(tree, 'entry.location').props.onChange({ target: { value: '' } })
-  control(tree, 'entry.lock').props.onChange({ target: { checked: false } })
+  control(tree, 'entry.lock').props.onClick()
   tree = client.render(EventEditor, props)
   button(tree, 'entry.save').props.onClick()
   await settle()
@@ -177,10 +179,10 @@ test('batch creation exposes shared location and lock controls', async () => {
     refresh: async () => {}, onClose() {},
   }
   let tree = client.render(BatchEditor, props)
-  assert.equal(control(tree, 'entry.lock').props.checked, false)
+  assert.equal(control(tree, 'entry.lock').props['aria-checked'], false)
   control(tree, 'entry.title').props.onChange({ target: { value: 'Batch' } })
   control(tree, 'entry.location').props.onChange({ target: { value: 'Gym' } })
-  control(tree, 'entry.lock').props.onChange({ target: { checked: true } })
+  control(tree, 'entry.lock').props.onClick()
   tree = client.render(BatchEditor, props)
   button(tree, 'batch.create').props.onClick()
   await settle()
@@ -293,4 +295,89 @@ test('unlocked resize still changes duration', async () => {
   await settle()
   assert.equal(grid.moved.length, 1)
   assert.equal(Date.parse(grid.moved[0][0].after.end) - Date.parse(grid.moved[0][0].before.end), 30 * 60_000)
+})
+
+
+test('dynamic category options, immediate preview and deleted-category save fallback', async () => {
+  const client = await clientHarness()
+  const { EventEditor } = client.module('editors')
+  const { CategoryPreview } = client.module('core')
+  const categories = [{ id: 'custom-design', name: '设计', color: '#DA22AA' }, { id: 'other', name: '其它', color: '#64748B' }]
+  let saved
+  const props = { t: key => key, initial: { ...entry('design'), category: 'custom-design' }, categories,
+    api: { updateEntry: async (_, input) => { saved = input; return { id: 'design' } } }, onClose() {}, onSaved() {} }
+  let tree = client.render(EventEditor, props)
+  assert.deepEqual(Array.from(control(tree, 'entry.category').children, node => node.props.value), ['custom-design', 'other'])
+  let preview = find(tree, node => node.type === CategoryPreview)
+  assert.equal(preview.type(preview.props).props.style['--bsch-block-color'], '#DA22AA')
+  props.categories = [{ ...categories[1], color: '#112233' }]
+  tree = client.render(EventEditor, props)
+  assert.equal(control(tree, 'entry.category').props.value, 'other')
+  preview = find(tree, node => node.type === CategoryPreview)
+  assert.equal(preview.type(preview.props).props.style['--bsch-block-color'], '#112233')
+  button(tree, 'entry.save').props.onClick()
+  await settle()
+  assert.equal(saved.category, 'other')
+})
+
+test('lock switch supports keyboard activation without changing drag-only semantics', async () => {
+  const client = await clientHarness()
+  const { EventEditor } = client.module('editors')
+  const props = { t: key => key, initial: null, onClose() {}, onSaved() {}, api: {} }
+  let tree = client.render(EventEditor, props)
+  const toggle = () => control(tree, 'entry.lock')
+  assert.equal(toggle().type, 'button')
+  assert.equal(toggle().props.role, 'switch')
+  let prevented = false
+  toggle().props.onKeyDown({ key: ' ', preventDefault() { prevented = true } })
+  tree = client.render(EventEditor, props)
+  assert.equal(prevented, true)
+  assert.equal(toggle().props['aria-checked'], true)
+  toggle().props.onKeyDown({ key: 'Enter', preventDefault() {} })
+  tree = client.render(EventEditor, props)
+  assert.equal(toggle().props['aria-checked'], false)
+  toggle().props.onClick()
+  tree = client.render(EventEditor, props)
+  assert.equal(toggle().props['aria-checked'], true)
+})
+
+test('grid category color updates use configured colors, not static tokens', async () => {
+  const grid = await gridHarness([{ ...entry('custom'), category: 'custom-art' }])
+  const block = grid.blocks()[0]
+  const categories = [{ id: 'custom-art', name: '绘画', color: '#FC2288' }, { id: 'other', name: '其它', color: '#64748B' }]
+  assert.equal(block.type({ ...block.props, categories }).props.style['--bsch-block-color'], '#FC2288')
+  categories[0].color = '#22AADD'
+  assert.equal(block.type({ ...block.props, categories }).props.style['--bsch-block-color'], '#22AADD')
+})
+
+test('undo restore resolves removed category to current other color metadata', async () => {
+  const client = await clientHarness()
+  const restored = await client.module('core').currentCategoryInputs({ snapshot: async () => ({ global: { categories: [{ id: 'other', name: '其它', color: '#112233' }] } }) }, [{ category: 'study', lock: true, location: 'A' }])
+  assert.equal(restored[0].category, 'other')
+  assert.equal(restored[0].lock, true)
+  assert.equal(restored[0].location, 'A')
+})
+
+test('category API posts explicit full-list operation', async () => {
+  const client = await clientHarness()
+  let body
+  const api = client.module('core').createApi(async (_, options) => { body = JSON.parse(options.body); return { json: async () => ({ ok: true, value: { categories: [] } }) } })
+  await api.setCategories([{ id: 'other', name: '其它', color: '#64748B' }])
+  assert.equal(body.op, 'setCategories')
+  assert.equal(body.categories[0].id, 'other')
+})
+
+
+test('undo errors stay visible and retain the actionable stack entry', async () => {
+  const client = await clientHarness()
+  const { useUndo } = client.module('core')
+  const refresh = async () => {}
+  let undo = client.render(useUndo, refresh)
+  undo.push({ undo: async () => { throw new Error('Category was removed; choose Other and retry.') } })
+  undo = client.render(useUndo, refresh)
+  undo.undo()
+  await settle()
+  undo = client.render(useUndo, refresh)
+  assert.match(undo.error, /choose Other/)
+  assert.equal(undo.canUndo, true)
 })

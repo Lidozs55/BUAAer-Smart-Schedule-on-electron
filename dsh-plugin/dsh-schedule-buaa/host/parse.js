@@ -168,7 +168,7 @@ export function parseTimetable(payload, termStart) {
         const entry = {
           sourceKey, title: rule.courseName, description: null, location: rule.location || null,
           start: `${date}T${rule.startTime}:00+08:00`, end: `${date}T${rule.endTime}:00+08:00`,
-          category: 'study', lock: true, allDay: false,
+          category: 'course', lock: true, allDay: false,
         }
         const prior = entries.get(sourceKey)
         if (prior === undefined || (!prior.location && entry.location)) entries.set(sourceKey, entry)

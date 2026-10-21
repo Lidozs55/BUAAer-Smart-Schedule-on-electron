@@ -792,10 +792,10 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
 
   const WATCH_PROMPT = [
     '这是「二游前瞻」周检。请核对原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环的官方版本前瞻直播与版本更新时间。',
-    '先调用 gacha_schedule（action=list）查看插件现有状态和推算依据。',
+    '先调用 gacha_schedule（action=list）查看插件现有状态摘要；摘要不含完整推算依据，也不作为官方证据。',
     '再到各游戏 B 站官方账号查看最近的版本更新公告、前瞻预告和动态，重点确认官方是否已给出明确日期/时间；终末地的版本节奏不固定，必须优先核对。',
     '发现官方明确时间时，用 gacha_schedule（action=apply_official）按游戏写入 update_start / preview_start（带时区 ISO 8601，UTC+8）；只改本插件维护的日程，不要动其他条目。',
-    '没有新信息就只回复「本周无变化」。',
+    '仅在成功核对且没有新信息时回复「本周无变化」；检索工具缺失、官方来源无法访问或材料不足时说明未核实，不推断无变化。',
   ].join('\n')
 
   /**
