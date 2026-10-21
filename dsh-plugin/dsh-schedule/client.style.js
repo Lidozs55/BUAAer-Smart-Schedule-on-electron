@@ -157,5 +157,19 @@ window.__ModuleLoader__.load({
 .bsch-toast { pointer-events: auto; padding: 10px 12px; border-radius: var(--dsw-radius-md); border: 0.5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-overlay); box-shadow: var(--dsw-elevation-panel); color: var(--dsw-alias-label-primary); }
 .bsch-toast-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
 .bsch-toast-body { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
+
+/* Coarse pointers (remote-web-ui phones, docs/14 §3): 44px-class touch
+   targets, 16px inputs (below that iOS zooms the viewport on focus) and
+   fatter block resize handles. */
+@media (pointer: coarse) {
+  .bsch-tab { min-height: 44px; box-sizing: border-box; }
+  .bsch-btn, .bsch-badge-btn { min-height: 44px; box-sizing: border-box; padding: 6px 12px; }
+  .bsch-input, .bsch-select, .bsch-textarea { font-size: 16px; }
+  .bsch-check { width: 20px; height: 20px; }
+  .bsch-block-resize { height: 14px; }
+  .bsch-row { padding: 10px 8px; }
+  .bsch-mc-day { height: 32px; }
+  .bsch-toast-host { right: 8px; bottom: 8px; }
+}
 `,
 })
