@@ -36,6 +36,9 @@ window.__ModuleLoader__.load({
 
 .bsch-gridwrap { flex: 1; min-height: 0; overflow-y: auto; position: relative; }
 .bsch-grid { position: relative; display: grid; grid-template-columns: 34px repeat(7, minmax(78px, 1fr)); }
+/* Touch holds replace right-click on phones (docs/14 §3): keep the OS
+   text-selection magnifier/callout out of the long-press. */
+.bsch-grid { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .bsch-grid-head { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 34px repeat(7, minmax(78px, 1fr)); background: var(--dsw-alias-bg-base); border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
 .bsch-grid-head > div { padding: 4px 2px; text-align: center; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
 .bsch-grid-head .is-today { color: var(--dsw-alias-brand-primary); font-weight: 500; }

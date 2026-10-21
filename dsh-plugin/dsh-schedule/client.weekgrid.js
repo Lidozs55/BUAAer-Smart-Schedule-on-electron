@@ -23,6 +23,13 @@
  *   - Delete removes the selection; Escape clears ghost and selection;
  *   - drag a block's bottom edge to resize (docs/10 §2 item 5);
  *   - click a header cell to move the window anchor to that day.
+ *
+ * Touch (remote-web-ui phones, docs/14 §3): there is no right button, no
+ * hover and no double-click, so a ~480ms hold replaces them — long-press
+ * an entry (or the ghost) opens its editor; long-press empty grid drafts
+ * a 1-hour create dialog at that spot. Browsers claim vertical touch pans
+ * on empty grid (`touch-action: pan-y`) and then fire pointercancel
+ * instead of pointerup, so every gesture must release on cancel too.
  */
 window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule/client.weekgrid.js',
@@ -42,6 +49,11 @@ window.__ModuleLoader__.load({
     // A lone left click on the ghost waits this long for a second press
     // (double-click) before the draft is destroyed.
     const GHOST_CLICK_MS = 350
+    // Touch hold that stands in for right-click/double-click (docs/14 §3).
+    const LONGPRESS_MS = 480
+    // Finger drift past this cancels the hold; tighter than the gesture
+    // thresholds so a scroll never completes the press into a menu.
+    const LONGPRESS_SLOP_PX = 10
 
     /** Minutes at `clientY`, snapped to the grid's 15-minute lattice. */
     const minutesAt = (rect, clientY) =>
@@ -124,6 +136,7 @@ window.__ModuleLoader__.load({
       const ghostRef = useRef(null)
       const ghostTimer = useRef(null)
       const rightPress = useRef(null)
+      const longPress = useRef(null)
 
       useEffect(() => { ghostRef.current = ghost }, [ghost])
 
@@ -137,6 +150,7 @@ window.__ModuleLoader__.load({
         setGhost(null)
         setSelected(new Set())
         setPendingMove(new Map())
+        clearLongPress()
       }, [weekStart])
 
       const clearGhostTimer = () => {
@@ -155,6 +169,71 @@ window.__ModuleLoader__.load({
       }
 
       const entriesById = useMemo(() => new Map(entries.map(entry => [entry.id, entry])), [entries])
+
+      // -- touch long-press (the right-click/double-click stand-in) ----------
+      const clearLongPress = () => {
+        if (longPress.current !== null) {
+          clearTimeout(longPress.current.timer)
+          longPress.current = null
+        }
+      }
+      const longPressConsumed = () => longPress.current?.fired === true
+
+      const cancelLongPressOnMove = moveEvent => {
+        const press = longPress.current
+        if (press === null || press.fired) return
+        if (Math.abs(moveEvent.clientX - press.x) > LONGPRESS_SLOP_PX
+          || Math.abs(moveEvent.clientY - press.y) > LONGPRESS_SLOP_PX) clearLongPress()
+      }
+
+      const armLongPress = (event, target) => {
+        clearLongPress()
+        const press = { timer: null, fired: false, x: event.clientX, y: event.clientY }
+        press.timer = setTimeout(() => {
+          press.fired = true
+          try { navigator.vibrate?.(12) } catch { /* unsupported: ignore */ }
+          clearGhostTimer()
+          if (target.kind === 'ghost') {
+            const current = ghostRef.current
+            if (current !== null) {
+              props.onCreateAt(days[current.day], current.startMin, current.endMin)
+              setGhost(null)
+            }
+          } else if (target.kind === 'entry') {
+            const raw = entriesById.get(target.id)
+            if (raw !== undefined) {
+              setGhost(null)
+              setSelected(new Set([target.id]))
+              props.onEditEntry({ raw })
+            }
+          } else if (target.day !== undefined) {
+            setGhost(null)
+            setSelected(new Set())
+            const startMin = clampToDay(minutesAt(gridRect(), event.clientY))
+            props.onCreateAt(days[target.day], startMin, Math.min(startMin + 60, DAY_END_MIN))
+          }
+        }, LONGPRESS_MS)
+        longPress.current = press
+      }
+
+      /** Release gesture listeners on BOTH pointerup and pointercancel —
+       *  a touch scroll takeover never delivers pointerup (docs/14 §3). */
+      const watchPointer = (onMove, onUp, onCancel) => {
+        const onPointerCancel = event => {
+          release()
+          clearLongPress()
+          onCancel?.(event)
+        }
+        const release = () => {
+          window.removeEventListener('pointermove', onMove)
+          window.removeEventListener('pointerup', onUp)
+          window.removeEventListener('pointercancel', onPointerCancel)
+        }
+        window.addEventListener('pointermove', onMove)
+        window.addEventListener('pointerup', onUp)
+        window.addEventListener('pointercancel', onPointerCancel)
+        return release
+      }
 
       // Drop a pending preview once the real row carries the new times (or
       // the row vanished). Failed moves are dropped by the onMoveItems result.
@@ -276,13 +355,16 @@ window.__ModuleLoader__.load({
           return idx === -1 ? origin.day : idx
         }
         const onMove = moveEvent => {
+          if (longPressConsumed()) return
+          cancelLongPressOnMove(moveEvent)
           const deltaMin = snapDelta(moveEvent.clientY - origin.y)
           const dayShift = dayAt(moveEvent.clientX) - origin.day
           setDrag({ ids, deltaMin, dx: dayShift * (cells[0]?.width ?? 0) })
         }
         const onUp = upEvent => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
+          release()
+          clearLongPress()
+          if (longPressConsumed()) return
           const deltaMin = snapDelta(upEvent.clientY - origin.y)
           const dayShift = dayAt(upEvent.clientX) - origin.day
           setDrag(null)
@@ -310,8 +392,7 @@ window.__ModuleLoader__.load({
             setSelected(new Set([id]))
           }
         }
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        const release = watchPointer(onMove, onUp, () => setDrag(null))
       }
 
       // -- gesture: move the ghost draft (left press on it) ---------------------
@@ -325,8 +406,10 @@ window.__ModuleLoader__.load({
         }
         let moved = false
         const onMove = moveEvent => {
+          if (longPressConsumed()) return
           if (!moved && Math.abs(moveEvent.clientY - originY) <= 3) return
           moved = true
+          cancelLongPressOnMove(moveEvent)
           const deltaMin = snapDelta(moveEvent.clientY - originY)
           const dayShift = dayAt(moveEvent.clientX) - dayIndex
           const day = Math.min(Math.max(start.day + dayShift, 0), 6)
@@ -336,14 +419,14 @@ window.__ModuleLoader__.load({
             : { day, startMin, endMin: Math.min(startMin + span, DAY_END_MIN) })
         }
         const onUp = () => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
+          release()
+          clearLongPress()
+          if (longPressConsumed()) return
           // A lone left click is not a ghost gesture: destroy the draft
           // unless a second press (double-click) arrives inside the window.
           if (!moved) scheduleGhostDestroy()
         }
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        const release = watchPointer(onMove, onUp)
       }
 
       const startResize = (block, event) => {
@@ -356,8 +439,7 @@ window.__ModuleLoader__.load({
           setResize({ id: block.id, endMin })
         }
         const onUp = upEvent => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
+          release()
           const endMin = Math.max(origin.startMin + SNAP_MIN,
             snapDelta(upEvent.clientY - origin.y) + origin.endMin)
           setResize(null)
@@ -376,8 +458,7 @@ window.__ModuleLoader__.load({
             settlePending(items, [block.id])
           }
         }
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        const release = watchPointer(onMove, onUp, () => setResize(null))
       }
 
       // -- gesture: right button (ghost creation / editor) ----------------------
@@ -440,11 +521,13 @@ window.__ModuleLoader__.load({
           if (!moved && Math.abs(moveEvent.clientX - origin.x) <= 4
             && Math.abs(moveEvent.clientY - origin.y) <= 4) return
           moved = true
+          cancelLongPressOnMove(moveEvent)
           setMarquee(box(origin.x, origin.y, moveEvent.clientX, moveEvent.clientY))
         }
         const onUp = upEvent => {
-          window.removeEventListener('pointermove', onMove)
-          window.removeEventListener('pointerup', onUp)
+          release()
+          clearLongPress()
+          if (longPressConsumed()) return
           setMarquee(null)
           if (!moved) return // plain click: selection was cleared at press
           // Hit-test in viewport coordinates against the live block rects
@@ -462,8 +545,7 @@ window.__ModuleLoader__.load({
           }
           setSelected(hits)
         }
-        window.addEventListener('pointermove', onMove)
-        window.addEventListener('pointerup', onUp)
+        const release = watchPointer(onMove, onUp, () => setMarquee(null))
       }
 
       const onGridPointerDown = event => {
@@ -476,6 +558,15 @@ window.__ModuleLoader__.load({
         const cells = cellRects()
         const dayIndex = cells.findIndex(rect => event.clientX >= rect.left && event.clientX < rect.right)
         clearGhostTimer()
+        clearLongPress()
+
+        // Touch holds replace right-click/double-click (docs/14 §3): entry
+        // or ghost opens its editor, empty grid drafts a 1-hour create.
+        if (event.pointerType === 'touch') {
+          if (isGhost) armLongPress(event, { kind: 'ghost' })
+          else if (isEntry) armLongPress(event, { kind: 'entry', id: blockEl.dataset.entryId })
+          else if (dayIndex !== -1) armLongPress(event, { kind: 'empty', day: dayIndex })
+        }
 
         if (event.button === 2) {
           if (isGhost) {
