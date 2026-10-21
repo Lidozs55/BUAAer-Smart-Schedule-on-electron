@@ -90,8 +90,14 @@ API token、OAuth、CalDAV 服务端、邮件通知。
 
 ## 5. 落地日志
 
-- 2026-10-22：本文建档。同批实现 §4 的 1–2（`remindLead` 全链路 + 触屏四件套），
-  见后续 git 提交与 README/SKILL 更新。
+- 2026-10-22：本文建档，同日落地 §4-1/2 全部四件：
+  - `236aa98` remindLead 全链路（schema/派生/服务校验/导入/工具/编辑器/测试）
+  - `09e4e3c` 触屏长按替代右键 + 全手势 pointercancel 释放
+  - `2e482e3` coarse-pointer 触控热区（44px/16px）
+  - `f49d9df` 窄屏日视图（WeekGrid dayCount + 日/周切换）
+- 未做（见 §4-3..5）：重复任务原地重生、quick-add 子集语法、保存筛选器。
+- 待真机验证：remote-web-ui 扫码后周/日网格实际渲染、Android 长按行为、
+  LAN 直连下通知落 toast 的表现。
 
 ## 6. 参考来源
 

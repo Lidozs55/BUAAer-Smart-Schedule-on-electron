@@ -45,6 +45,7 @@ package.json                       # 仓库元信息（各插件包自带 packag
 - DSH 插件开发参考（平台契约、服务/UI/数据/工具速查）：同目录 `01`–`06`、`08`
 - 桌宠桥设计（已落地 v2）：`docs/dsh-plugin/09-vivarium-bridge.md`
 - UI 意图对齐返工记录（已完成）：`docs/dsh-plugin/10-ui-parity-rework.md`
+- Vikunja 借鉴与多端访问评估（remindLead/触屏适配据此落地）：`docs/dsh-plugin/14-vikunja-and-remote.md`
 
 ## 核心行为约定
 
@@ -54,5 +55,6 @@ package.json                       # 仓库元信息（各插件包自带 packag
 - 插件内零 LLM 调用：自然语言建日程 = 在会话内让 Agent 调工具。
 - 学号等来源状态由来源插件持久化在核心 domain 的 `sourceState`；教务密码只作当次调用入参，绝不落盘，也不缓存会话。
 - 北航导入是整学期快照：按教务实际周次生成锁定的 `course`/`exam` 条目并保留考试任务；稳定来源键保留条目 ID，缺席条目只从本来源删除，不外推空周。
-- 任务与条目提醒由核心无状态派生：页面每 30 秒轮询并显示 Web Notification/页面内提示，可选桌宠桥消费同一集合。普通提醒不写 `ctx.schedule`、不建会话、不唤醒 Agent；页面关闭时页面通知停止，桌宠气泡可独立运行。
+- 任务与条目提醒由核心无状态派生：页面每 30 秒轮询并显示 Web Notification/页面内提示，可选桌宠桥消费同一集合。普通提醒不写 `ctx.schedule`、不建会话、不唤醒 Agent；页面关闭时页面通知停止，桌宠气泡可独立运行。条目与任务可单独设置提醒提前量（`remindLead`，空值跟随全局四档；工具参数 `remind_lead`，`-1` 清除）。
+- 触屏适配（供 remote-web-ui 等手机远程访问，`docs/dsh-plugin/14`）：长按条目/空白替代右键（编辑/落 1 小时草稿），coarse 指针下按钮/输入放大到 44px/16px，≤640px 窄屏默认日视图（工具栏日/周切换，选择记忆在 localStorage）。
 - 导出/导入仅处理 `global`、`entries`、`tasks`。启动时的一次性存量转换按实际周次生成条目、保留改期、跳过取消项；需要学期起点，不提供旧 API/旧 JSON 导入兼容。升级前请备份宿主数据（见 `docs/dsh-plugin/13-entry-model.md`）。
