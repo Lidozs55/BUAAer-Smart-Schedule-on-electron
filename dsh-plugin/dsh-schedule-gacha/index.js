@@ -2,9 +2,11 @@
  * Host half of @lidozs55/dsh-schedule-gacha.
  *
  * The generic schedule core owns the calendar, entries, conflict detection
- * and settings page. This adapter owns only the six official Bilibili
- * accounts, the announcement parsing rules and one preview entry per game.
- * Version updates remain source information. Removing it leaves every existing entry in
+ * and settings page. This adapter owns only the six games' source identity:
+ * since the gacha-calendar service went live, collection, parsing and
+ * next-version planning happen server-side; the adapter reads the formatted
+ * plans over /api and keeps one preview entry per game. Version updates
+ * remain source information. Removing it leaves every existing entry in
  * place; only future refreshes stop.
  */
 import { registerGachaApi } from './host/api.js'
@@ -21,8 +23,9 @@ export async function apply(ctx) {
   ctx.effect(() => () => service.dispose(), 'gacha-schedule: dispose')
   await service.reconcileCachedEntries()
 
-  // Background refresh is the primary path: no Agent turn is required, and a
-  // profile without the optional schedule bundle still gets correct dates.
+  // Background refresh reads the formatted service state: no Agent turn is
+  // required, and a profile without the optional schedule bundle still gets
+  // correct dates. The service itself re-collects from Bilibili every 6 h.
   // `ctx.timer` is a Cordis context mixin (not a service).
   const timer = ctx.timer
   if (timer !== undefined && timer !== null) {
@@ -42,10 +45,10 @@ export async function apply(ctx) {
       name: 'gacha-schedule',
       order: 1002,
       text: () => [
-        '二游前瞻插件已启用：后台每 6 小时从六款游戏的 B 站官方账号刷新版本更新与前瞻直播时间，',
-        '仅「版本前瞻直播」同步至日程；「版本更新」只保存为来源信息，不占用日历时间。',
-        '用 gacha_schedule 查询（action=list）或立即刷新（action=refresh）；',
-        '官方明确给出时间时用 action=apply_official 按游戏写入（带时区 ISO 8601，UTC+8），',
+        '二游前瞻插件已启用：数据来自 gacha-calendar 服务（gacha.modenc.top，后台每 6 小时从六款游戏的 B 站官方账号采集公告并推算），',
+        '插件每 6 小时读取格式化后的版本更新与前瞻直播时间，仅「版本前瞻直播」同步至日程；「版本更新」只保存为来源信息，不占用日历时间。',
+        '用 gacha_schedule 查询（action=list）；action=posts 可分页读取服务保存的原始公告/动态原文（含发布时间与链接），核对更新时间时优先阅读原文；',
+        '官方明确给出时间时用 action=apply_official 按游戏写入（带时区 ISO 8601，UTC+8），校正会转发到服务端对所有端点生效；',
         '推算前瞻时间可编辑；官方明确日期与时间的前瞻仅锁定快捷拖动，其他编辑照常。不要把其他日程改成二游内容。',
         '查询、刷新和官方校正都使用本插件工具，不用 sched_entry 替代刷新或额外创建同一前瞻；显式编辑/删除不受锁定限制，但后续刷新仍会按来源规则对账。',
         'list 只提供状态摘要，不作为官方证据；官方校正须有用户提供的明确官方材料或可用检索工具查证，不把推算当官方时间。',
@@ -55,5 +58,5 @@ export async function apply(ctx) {
     }), 'gacha-schedule: prompt section')
   }
 
-  ctx.logger.info('gacha-schedule: six-game preview tracker active')
+  ctx.logger.info('gacha-schedule: six-game preview tracker active (data: gacha-calendar)')
 }

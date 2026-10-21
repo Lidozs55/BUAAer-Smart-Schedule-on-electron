@@ -1,20 +1,21 @@
 /**
  * Business implementation of the gacha source adapter.
  *
- * One refresh cycle per game:
- *   1. official column list → newest version-update article
- *   2. parse its 255-char list summary; fetch the full column only when the
- *      summary lacks a date/version, or Endfield needs a deeper phase date
- *      (Bilibili rate limits full-column reads aggressively)
- *   3. official preview videos + recent official dynamics
- *   4. `planNext` pure rules → update / preview times
- *   5. reconcile the preview entry; updates remain source information only
+ * Since the gacha-calendar service went live, this adapter no longer talks to
+ * Bilibili and no longer parses announcements: collection, parsing and
+ * next-version planning happen server-side (gacha.modenc.top). One refresh
+ * per game now means:
  *
- * Failures never invent dates: the previous parsed article and plan stay in
- * place, and the error is only reported to the settings card / Agent.
+ *   1. GET /api/games — formatted plan (update/preview, confidences, evidence)
+ *   2. GET /api/posts?is_update_notice=1 — the announcement behind the plan
+ *   3. reconcile the preview entry; updates remain source information only
+ *
+ * Official-time corrections are forwarded to the service (admin token), so
+ * the web UI and every plugin host see the same correction immediately.
+ * Failures never invent dates: the previous plan stays in place and the
+ * error is reported to the settings card / Agent.
  */
 import {
-  DEFAULT_PREVIEW_WINDOW,
   GAME_IDS,
   entryMarker,
   getGame,
@@ -23,17 +24,7 @@ import {
   ownsEntry,
   ownsKind,
 } from './games.js'
-import { articleUrl, createBilibili, dynamicText, stripHtml } from './bilibili.js'
-import {
-  atMinutes,
-  cstParts,
-  defaultUpdateEnd,
-  isPreviewTitle,
-  normalizeCstIso,
-  parseArticle,
-  planNext,
-  previewByRule,
-} from './parse.js'
+import { createCalendarApi } from './calendarApi.js'
 import { SOURCE_ID, normalizeState } from './state.js'
 
 const DAY_MS = 86_400_000
@@ -56,43 +47,74 @@ const invalid = message => new GachaError('invalid_input', message)
 const isObject = value =>
   value !== null && typeof value === 'object' && !Array.isArray(value)
 
-const secondsToMs = value => {
-  const seconds = Number(value)
-  return Number.isFinite(seconds) && seconds > 0 ? seconds * 1000 : 0
+/** Re-express a UTC (or any offset) RFC3339 instant as an explicit +08:00 ISO string. */
+export function toCstIso(value) {
+  if (typeof value !== 'string' || value === '') return null
+  // Reject naive datetimes on purpose — the legacy "local time stored as UTC"
+  // bug must not come back through service data.
+  if (!/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) return null
+  const ms = Date.parse(value)
+  if (!Number.isFinite(ms)) return null
+  const shifted = new Date(ms + 8 * HOUR_MS)
+  return `${shifted.getUTCFullYear()}-${pad(shifted.getUTCMonth() + 1)}-${pad(shifted.getUTCDate())}`
+    + `T${pad(shifted.getUTCHours())}:${pad(shifted.getUTCMinutes())}:${pad(shifted.getUTCSeconds())}+08:00`
 }
 
-/** Format an ISO instant as the CST wall clock, independent of host zone. */
-function hhmm(iso) {
-  const p = cstParts(iso)
-  return p === null ? '' : `${pad(p.hour)}:${pad(p.minute)}`
+/** Re-express any offset-ful ISO instant as UTC RFC3339 for the service API. */
+export const toUtcIso = value => {
+  const ms = Date.parse(value)
+  return Number.isFinite(ms) ? new Date(ms).toISOString() : null
 }
 
-function windowText(start, end) {
-  const a = cstParts(start)
-  const b = cstParts(end)
-  if (a === null || b === null) return ''
-  const sameDay = a.year === b.year && a.month === b.month && a.day === b.day
-  return `${hhmm(start)}–${sameDay ? '' : '次日'}${hhmm(end)}（UTC+8）`
+/** Map a service prediction view onto the plugin's plan shape. */
+export function planFromApi(view) {
+  const prediction = view?.prediction
+  if (!isObject(prediction)) return null
+  const window = meta => (isObject(meta) && typeof meta.utc === 'string' && meta.utc !== '')
+    ? { start: toCstIso(meta.utc), end: toCstIso(meta.end_utc) }
+    : null
+  const update = window(prediction.update)
+  const preview = window(prediction.preview)
+  if (update === null && preview === null) return null
+  return {
+    version: typeof prediction.version === 'string' && prediction.version !== ''
+      ? prediction.version : null,
+    updateStart: update?.start ?? null,
+    updateEnd: update?.end ?? null,
+    previewStart: preview?.start ?? null,
+    previewEnd: preview?.end ?? null,
+    updateConfidence: prediction.update_confidence || null,
+    previewConfidence: prediction.preview_confidence || null,
+    updateEvidence: prediction.update_evidence || null,
+    previewEvidence: prediction.preview_evidence || null,
+    generatedAt: new Date().toISOString(),
+  }
+}
+
+/** Announcement metadata from the newest update-notice post. */
+function articleFromPost(post) {
+  if (!isObject(post)) return null
+  return {
+    id: String(post.external_id ?? ''),
+    title: typeof post.title === 'string' ? post.title : '',
+    publishTime: Math.floor(Date.parse(post.publish_time?.utc ?? '') / 1000) || 0,
+    url: typeof post.url === 'string' ? post.url : '',
+  }
 }
 
 const confidenceLabel = confidence => (confidence === 'inferred' ? '（推算）' : '')
 
-function titleFor(game, plan, kind) {
-  const version = plan.version === null ? '' : `${plan.version} `
-  return `${game.name} ${version}${kind === 'preview' ? '版本前瞻直播' : '版本更新'}`
+function titleFor(game, plan) {
+  const version = plan?.version == null ? '' : `${plan.version} `
+  return `${game.name} ${version}版本前瞻直播`
 }
 
-function descriptionFor(game, state, plan, kind) {
-  const evidence = kind === 'preview' ? plan.previewEvidence : plan.updateEvidence
-  const confidence = kind === 'preview' ? plan.previewConfidence : plan.updateConfidence
+function descriptionFor(game, state, plan) {
   const lines = [
-    `${entryMarker(game.id)}${kindMarker(kind)} 由「二游前瞻」插件同步；推算时间可编辑，官方明确时间锁定拖动。`,
-    plan.version === null ? null : `版本：${plan.version}`,
-    `依据：${evidence ?? '官方公告'}${confidenceLabel(confidence)}`,
+    `${entryMarker(game.id)}${kindMarker('preview')} 由「二游前瞻」插件经 gacha-calendar 服务同步；推算时间可编辑，官方明确时间锁定拖动。`,
+    plan?.version == null ? null : `版本：${plan.version}`,
+    `依据：${plan?.previewEvidence ?? '官方公告'}${confidenceLabel(plan?.previewConfidence)}`,
   ]
-  if (kind === 'update' && plan.updateStart !== null && plan.updateEnd !== null) {
-    lines.push(`维护时段：${windowText(plan.updateStart, plan.updateEnd)}`)
-  }
   const gs = state.games[game.id]
   if (typeof gs?.article?.url === 'string' && gs.article.url !== '') {
     lines.push(`官方来源：${gs.article.url}`)
@@ -100,112 +122,18 @@ function descriptionFor(game, state, plan, kind) {
   return lines.filter(line => line !== null).join('\n')
 }
 
-/** Newest official article that claims to be a version update notice. */
-function pickArticle(game, articles, nowMs) {
-  if (!Array.isArray(articles)) return null
-  return articles
-    .filter(item => isObject(item) && typeof item.title === 'string')
-    .filter(item => !game.excludeTitle.test(item.title))
-    .filter(item => game.updateTitle.test(item.title))
-    .filter(item => {
-      const published = secondsToMs(item.publish_time)
-      // A little tolerance for CST/UTC rounding at the day boundary.
-      return published === 0 || published <= nowMs + DAY_MS
-    })
-    .sort((a, b) => Number(b.publish_time) - Number(a.publish_time))[0] ?? null
-}
-
-function validOverride(gs) {
-  const override = gs.override
-  if (!isObject(override)) return null
-  if (typeof override.appliedAt !== 'string') return null
-  const applied = new Date(override.appliedAt).getTime()
-  if (!Number.isFinite(applied)) return null
-  // A newer official article supersedes an Agent correction that was made
-  // against the previous one; otherwise the correction stays authoritative.
-  if (gs.article !== null && secondsToMs(gs.article.publishTime) > applied) return null
-  return override
-}
-
-/** Layer an Agent correction over the rule-derived plan, field by field. */
-function mergePlan(game, base, override) {
-  if (override === null) return base
-  const updateStart = override.updateStart ?? base?.updateStart ?? null
-  const updateEnd = override.updateEnd
-    ?? (override.updateStart !== null ? defaultUpdateEnd(updateStart, game) : null)
-    ?? base?.updateEnd
-    ?? (updateStart === null ? null : defaultUpdateEnd(updateStart, game))
-  const previewStart = override.previewStart
-    ?? base?.previewStart
-    ?? (updateStart === null ? null : previewByRule(updateStart, game))
-  const previewEnd = override.previewEnd
-    ?? (override.previewStart !== null
-      ? atMinutes(previewStart, DEFAULT_PREVIEW_WINDOW(game).endMinutes)
-      : null)
-    ?? base?.previewEnd
-    ?? (previewStart === null
-      ? null
-      : atMinutes(previewStart, DEFAULT_PREVIEW_WINDOW(game).endMinutes))
-
-  if (updateStart === null && previewStart === null) return base
-
-  return {
-    version: override.version ?? base?.version ?? null,
-    updateStart,
-    updateEnd,
-    previewStart,
-    previewEnd,
-    updateConfidence: override.updateStart !== null
-      ? 'agent'
-      : base?.updateConfidence ?? null,
-    previewConfidence: override.previewStart !== null
-      ? 'agent'
-      : base?.previewConfidence ?? null,
-    updateEvidence: override.updateStart !== null
-      ? override.note ?? 'Agent 核对官方公告'
-      : base?.updateEvidence ?? null,
-    previewEvidence: override.previewStart !== null
-      ? override.note ?? 'Agent 核对官方公告'
-      : base?.previewEvidence ?? null,
-    generatedAt: new Date().toISOString(),
-  }
-}
-
 const planIsLive = plan => plan !== null && (plan.updateStart !== null || plan.previewStart !== null)
 
-/**
- * Summary-first merge. The 255-character list summary reliably carries the
- * maintenance start and the version end date, while a full column may open
- * with a *previous* phase's dates (Endfield). The full text therefore only
- * fills fields the summary did not produce.
- */
-function mergeArticle(summary, full) {
-  if (summary === null) return full
-  return {
-    version: summary.version ?? full.version,
-    versionName: summary.versionName ?? full.versionName,
-    updateStart: summary.updateStart ?? full.updateStart,
-    updateEnd: summary.updateEnd ?? full.updateEnd,
-    versionEnd: summary.versionEnd ?? full.versionEnd,
-    previewAt: summary.previewAt ?? full.previewAt,
-    phaseUpdate: summary.phaseUpdate ?? full.phaseUpdate,
-  }
-}
-
-export function createGachaService(ctx, { service, bilibili } = {}) {
+export function createGachaService(ctx, { service, calendarApi } = {}) {
   if (service === undefined) throw new Error('gacha-schedule: scheduleCore is required')
 
-  const bili = bilibili ?? createBilibili(ctx.logger)
+  const api = calendarApi ?? createCalendarApi()
   const state = normalizeState(service.getSourceState(SOURCE_ID))
   const lifetime = new AbortController()
 
-  // One-line-per-stage logging: enough to reconstruct why a date was chosen
-  // from the host log, without dumping announcement bodies.
   const info = (fmt, ...args) => ctx.logger.info(`gacha-schedule: ${fmt}`, ...args)
   const warn = (fmt, ...args) => ctx.logger.warn(`gacha-schedule: ${fmt}`, ...args)
   const short = iso => (typeof iso === 'string' ? iso.slice(5, 16).replace('T', ' ') : '—')
-  // Log timestamps in the same zone the announcements use, not the host zone.
-  const shortCst = ms => (Number.isFinite(ms) ? short(new Date(ms + 8 * HOUR_MS).toISOString()) : '—')
 
   /** Per-game mutex: entry reconciliation and enable/disable never interleave. */
   const gameChains = new Map()
@@ -257,8 +185,8 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
       return
     }
     const desired = {
-      title: titleFor(game, plan, 'preview'),
-      description: descriptionFor(game, state, plan, 'preview'),
+      title: titleFor(game, plan),
+      description: descriptionFor(game, state, plan),
       location: null, category: 'other', allDay: false,
       start: plan.previewStart, end: plan.previewEnd,
       lock: plan.previewConfidence === 'official' || plan.previewConfidence === 'agent',
@@ -270,7 +198,6 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     } else {
       const patch = { ...desired }
       // A refresh owns its source facts, not the user's editable fields.
-      // Compare against our last emitted values, not the last edited row.
       const previous = gs.syncedPreview
       for (const key of ['title', 'description', 'location', 'category', 'allDay', 'start', 'end']) {
         const time = key === 'start' || key === 'end' || key === 'allDay'
@@ -317,70 +244,12 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     await persist()
   }
 
-  async function previewVideos(game, current, signal) {
-    const rows = []
-    // Series rows expose the uploader as `upMid`; search rows use `mid`.
-    const authorId = item => String(item?.mid ?? item?.upMid ?? '')
-    const officialOnly = items => (Array.isArray(items) ? items : [])
-      .filter(item => authorId(item) === game.mid)
-    const push = items => {
-      for (const item of officialOnly(items)) rows.push(item)
-    }
-    const titleOf = item => stripHtml(String(item?.title ?? ''))
-
-    push(await bili.featureVideos(game.mid, game.previewSeriesKeyword, { signal }))
-
-    // The official series endpoint is the reliable path (WuWa only appears
-    // there); search is a fallback for accounts whose series is not filled in.
-    if (!rows.some(item => isPreviewTitle(titleOf(item)))) {
-      const keywords = [
-        `${game.name} 版本前瞻特别节目`,
-        game.searchKeyword ?? `${game.name} 前瞻`,
-      ]
-      for (const keyword of keywords) {
-        const found = await bili.searchVideos(keyword, { signal })
-        push(found)
-        if (officialOnly(found).some(item => isPreviewTitle(titleOf(item)))) break
-      }
-    }
-
-    // Do not let the previous version's preview video masquerade as the next
-    // one: only uploads after the current version went live are candidates.
-    const floor = current?.updateStart === null || current?.updateStart === undefined
-      ? Date.now() - 120 * DAY_MS
-      : new Date(current.updateStart).getTime() - DAY_MS
-    const seen = new Set()
-    return rows
-      .map(item => ({
-        bvid: typeof item?.bvid === 'string' ? item.bvid : null,
-        title: titleOf(item),
-        pubdate: Number(item?.pubdate ?? 0),
-      }))
-      .filter(item => item.pubdate > 0 && item.pubdate * 1000 >= floor)
-      .filter(item => isPreviewTitle(item.title))
-      .filter(item => {
-        const key = item.bvid ?? item.title
-        if (seen.has(key)) return false
-        seen.add(key)
-        return true
-      })
-  }
-
-  async function announcements(game, nowMs, signal) {
-    const items = await bili.dynamics(game.mid, { signal })
-    const cutoff = nowMs - 75 * DAY_MS
-    return items
-      .map(item => {
-        const author = item?.modules?.module_author
-        const seconds = Number(author?.pub_ts ?? 0)
-        const id = String(item?.id_str ?? item?.id ?? '')
-        return {
-          text: dynamicText(item),
-          pubdate: seconds,
-          url: id === '' ? null : `https://t.bilibili.com/${id}`,
-        }
-      })
-      .filter(item => item.text !== '' && item.pubdate > 0 && item.pubdate * 1000 >= cutoff)
+  /** Fetch the formatted state of every enabled game from the service. */
+  async function fetchViews(ids, signal) {
+    const views = await api.games(signal)
+    if (!Array.isArray(views)) throw new GachaError('bad_response', '服务返回的游戏列表不可用')
+    const wanted = new Set(ids)
+    return views.filter(view => wanted.has(view.id))
   }
 
   async function refreshGame(id, { signal } = {}) {
@@ -390,139 +259,27 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     if (disposed) return { game: id, skipped: true }
 
     const gs = state.games[id]
-    const now = new Date()
-    const nowMs = now.getTime()
     const startedMs = Date.now()
     const errors = []
-    info('%s refresh start (article=%s)', game.name, gs.article?.id ?? 'none')
+    info('%s refresh start (from gacha-calendar)', game.name)
 
-    let articles = []
+    let view = null
+    let notice = null
     try {
-      articles = await bili.articleList(game.mid, { signal })
-      info('%s article list: %d rows, newest update notice %s', game.name, articles.length,
-        pickArticle(game, articles, nowMs)?.title ?? 'none')
+      const [views, latest] = await Promise.all([
+        fetchViews([id], signal),
+        api.latestNotice(id, signal).catch(error => {
+          errors.push(`公告元数据：${error.message}`)
+          return null
+        }),
+      ])
+      view = views.find(item => item.id === id) ?? null
+      notice = latest
     } catch (error) {
-      if (error?.name === 'AbortError') return { game: id, aborted: true }
-      errors.push(`公告列表：${error.message}`)
-      warn('%s article list failed: %s', game.name, error.message)
+      if (error?.name === 'AbortError' || signal?.aborted) return { game: id, aborted: true }
+      errors.push(`服务接口：${error.message}`)
+      warn('%s service fetch failed: %s', game.name, error.message)
     }
-
-    const picked = pickArticle(game, articles, nowMs)
-    if (picked !== null) {
-      const articleId = String(picked.id)
-      info('%s picked article %s "%s" (published %s CST)', game.name, articleId, picked.title,
-        shortCst(Number(picked.publish_time) * 1000))
-      if (gs.article?.id !== articleId) {
-        const published = Number(picked.publish_time)
-        const summaryText = typeof picked.summary === 'string' ? stripHtml(picked.summary) : ''
-        // The article list already carries the opening paragraph: all six
-        // games state the maintenance start there, and HSR/ZZZ also state the
-        // version end date, so a full-column read (heavily rate limited) is
-        // usually unnecessary.
-        let parsed = summaryText === ''
-          ? null
-          : parseArticle({
-            title: picked.title,
-            content: summaryText,
-            publishTime: published,
-            game,
-          })
-        let title = picked.title
-        let publishTime = published
-
-        const missing = []
-        if (parsed === null) missing.push('摘要为空')
-        else {
-          if (parsed.updateStart === null) missing.push('缺更新时间')
-          if (parsed.version === null) missing.push('缺版本号')
-          // These two announce an explicit end date; a truncated summary must
-          // not silently downgrade to the arithmetic cadence.
-          if (game.expectVersionEnd === true && parsed.versionEnd === null) missing.push('缺版本结束日')
-          // Endfield's next phase date lives deeper in the article.
-          if (game.phaseHint === true && parsed.phaseUpdate === null) missing.push('缺阶段更新日')
-        }
-        // Only cv ids address `x/article/view`; an opus id would 404.
-        const needsFullText = /^\d{1,12}$/.test(articleId) && missing.length > 0
-        info('%s summary parse: version=%s update=%s→%s versionEnd=%s%s', game.name,
-          parsed?.version ?? '—', short(parsed?.updateStart), short(parsed?.updateEnd),
-          short(parsed?.versionEnd), needsFullText ? ` | full text needed (${missing.join('、')})` : ' | summary sufficient')
-
-        if (needsFullText) {
-          try {
-            const view = await bili.articleView(articleId, { signal })
-            if (disposed) return { game: id, aborted: true }
-            const full = parseArticle({
-              title: view.title || picked.title,
-              content: view.content,
-              publishTime: view.publishTime || published,
-              game,
-            })
-            parsed = mergeArticle(parsed, full)
-            title = view.title || picked.title
-            publishTime = view.publishTime || published
-            info('%s full column merged: version=%s update=%s→%s versionEnd=%s', game.name,
-              parsed?.version ?? '—', short(parsed?.updateStart), short(parsed?.updateEnd),
-              short(parsed?.versionEnd))
-          } catch (error) {
-            if (error?.name === 'AbortError') return { game: id, aborted: true }
-            errors.push(`公告正文：${error.message}`)
-            warn('%s full column failed: %s', game.name, error.message)
-          }
-        }
-
-        if (parsed !== null && parsed.updateStart !== null) {
-          gs.article = {
-            id: articleId,
-            title,
-            publishTime,
-            url: articleUrl(articleId),
-          }
-          gs.current = parsed
-        } else if (parsed !== null && gs.current === null) {
-          // Keep the card informative even when no date could be read yet.
-          gs.article = {
-            id: articleId,
-            title,
-            publishTime,
-            url: articleUrl(articleId),
-          }
-          gs.current = parsed
-        } else {
-          errors.push('最新公告未解析出更新时间，沿用上次结果')
-          warn('%s newest notice %s has no usable update time; keeping previous state',
-            game.name, articleId)
-        }
-
-        if (parsed !== null && gs.current === parsed) {
-          info('%s current version %s: update %s→%s, versionEnd %s', game.name,
-            parsed.version ?? '—', short(parsed.updateStart), short(parsed.updateEnd),
-            short(parsed.versionEnd))
-        }
-      }
-    } else if (errors.length === 0) {
-      errors.push('未找到版本更新公告')
-      warn('%s no matching version-update notice in %d rows', game.name, articles.length)
-    }
-
-    let videos = []
-    let feed = []
-    if (gs.current !== null) {
-      try {
-        videos = await previewVideos(game, gs.current, signal)
-      } catch (error) {
-        if (error?.name === 'AbortError') return { game: id, aborted: true }
-        errors.push(`前瞻视频：${error.message}`)
-      }
-      try {
-        feed = await announcements(game, nowMs, signal)
-      } catch (error) {
-        if (error?.name === 'AbortError') return { game: id, aborted: true }
-        errors.push(`官方动态：${error.message}`)
-      }
-      info('%s preview videos=%d, recent dynamics=%d', game.name, videos.length, feed.length)
-    }
-
-    if (disposed) return { game: id, aborted: true }
 
     return withGame(id, async () => {
       if (disposed) return { game: id, aborted: true }
@@ -532,65 +289,43 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
         return { game: id, skipped: true }
       }
 
-      const gsCurrent = state.games[id]
-      const override = validOverride(gsCurrent)
-      if (override === null) gsCurrent.override = null
+      const plan = view === null ? gs.plan : planFromApi(view)
+      if (view !== null) {
+        if (notice !== null) gs.article = articleFromPost(notice)
+        gs.lastError = null
+      }
 
-      let officialPlan = gsCurrent.current === null
-        ? null
-        : planNext({
-          game,
-          current: gsCurrent.current,
-          now: now.toISOString(),
-          videos,
-          announcements: feed,
-        })
-      const prior = gsCurrent.officialPlan
-      // A missing teaser/replay (including an outage) is not a retraction.
-      // Retain explicit same-version timing until new explicit evidence or a
-      // new version replaces it; never downgrade confirmed dates to arithmetic.
-      if (prior?.previewConfidence === 'official' && prior.previewStart && prior.previewEnd
-        && new Date(prior.previewStart).getTime() >= nowMs - 2 * DAY_MS
-        && (officialPlan === null || officialPlan.version === prior.version)
-        && officialPlan?.previewConfidence !== 'official') {
-        officialPlan = {
-          ...(officialPlan ?? prior),
-          previewStart: prior.previewStart, previewEnd: prior.previewEnd,
-          previewConfidence: prior.previewConfidence, previewEvidence: prior.previewEvidence,
+      gs.plan = plan
+      gs.lastRefreshAt = new Date().toISOString()
+      if (view !== null && view.status !== undefined) {
+        gs.status = view.status === 'ok' ? 'ok' : view.status === 'partial' ? 'partial' : 'error'
+        if (typeof view.last_error === 'string' && view.last_error !== '') {
+          errors.push(`服务采集：${view.last_error}`)
         }
       }
-      const plan = mergePlan(game, officialPlan, gsCurrent.override)
-
-      gsCurrent.officialPlan = officialPlan
-      gsCurrent.plan = plan
-      gsCurrent.lastRefreshAt = now.toISOString()
-      gsCurrent.lastError = errors.length === 0 ? null : errors.join('；')
-      gsCurrent.status = plan === null
-        ? 'error'
-        : errors.length === 0 ? 'ok' : 'partial'
-      if (plan === null && gsCurrent.lastError === null) {
-        gsCurrent.lastError = '暂无可用的版本信息'
+      if (plan === null) gs.status = 'error'
+      gs.lastError = errors.length === 0 ? null : errors.join('；')
+      if (plan === null && gs.lastError === null) {
+        gs.lastError = '暂无可用的版本信息'
       }
 
       if (plan === null) {
-        warn('%s no plan: %s', game.name, gsCurrent.lastError)
+        warn('%s no plan: %s', game.name, gs.lastError)
       } else {
-        info('%s plan %s: update %s→%s (%s), preview %s (%s)', game.name,
-          plan.version ?? '—', short(plan.updateStart), short(plan.updateEnd),
-          plan.updateEvidence ?? plan.updateConfidence ?? '—',
-          short(plan.previewStart), plan.previewEvidence ?? plan.previewConfidence ?? '—')
+        info('%s plan %s: update %s（%s）, preview %s（%s）', game.name,
+          plan.version ?? '—', short(plan.updateStart), plan.updateEvidence ?? '—',
+          short(plan.previewStart), plan.previewEvidence ?? '—')
       }
 
       await reconcileEntries(game, plan, Date.now())
-      state.lastRefreshAt = now.toISOString()
+      state.lastRefreshAt = new Date().toISOString()
       await persist()
-      info('%s refresh %s in %d ms%s', game.name, gsCurrent.status, Date.now() - startedMs,
-        gsCurrent.lastError === null ? '' : ` (${gsCurrent.lastError})`)
+      info('%s refresh %s in %d ms', game.name, gs.status, Date.now() - startedMs)
       return {
         game: id,
-        status: gsCurrent.status,
+        status: gs.status,
         plan,
-        error: gsCurrent.lastError,
+        error: gs.lastError,
       }
     })
   }
@@ -651,11 +386,11 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
       status: gs.status,
       lastRefreshAt: gs.lastRefreshAt,
       lastError: gs.lastError,
-      version: gs.plan?.version ?? gs.current?.version ?? null,
+      version: gs.plan?.version ?? null,
       article: gs.article,
       plan: gs.plan,
-      officialPlan: gs.officialPlan,
-      override: gs.override,
+      officialPlan: gs.plan,
+      override: null,
       entries: { ...gs.entries },
     }
   }
@@ -703,9 +438,9 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
   }
 
   /**
-   * Agent-only write path. The caller names a game and explicit instants; it
-   * can never address an arbitrary schedule entry, so other schedules are
-   * untouchable by construction.
+   * Official-time correction. The plugin validates locally, then forwards the
+   * correction to the gacha-calendar service (which layers it over the rule
+   * plan for every consumer) and re-reads the merged plan.
    */
   async function applyOfficial(input) {
     const id = input?.game
@@ -716,11 +451,11 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
       if (typeof value !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
         throw invalid(key + ' 必须是带时区的 ISO 8601')
       }
-      const normalized = normalizeCstIso(value)
+      const normalized = toCstIso(value)
       if (normalized === null) {
         throw invalid(`${key} 必须是带时区的 ISO 8601：${value}`)
       }
-      return normalized
+      return { cst: normalized, utc: toUtcIso(value) }
     }
     const version = input.version === undefined || input.version === null || input.version === ''
       ? null
@@ -734,15 +469,15 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     const previewEnd = read('preview_end')
 
     if (updateStart !== null && updateEnd !== null
-      && new Date(updateEnd).getTime() <= new Date(updateStart).getTime()) {
+      && Date.parse(updateEnd.cst) <= Date.parse(updateStart.cst)) {
       throw invalid('update_end 必须晚于 update_start')
     }
     if (previewStart !== null && previewEnd !== null
-      && new Date(previewEnd).getTime() <= new Date(previewStart).getTime()) {
+      && Date.parse(previewEnd.cst) <= Date.parse(previewStart.cst)) {
       throw invalid('preview_end 必须晚于 preview_start')
     }
     if (previewStart !== null && updateStart !== null
-      && new Date(previewStart).getTime() >= new Date(updateStart).getTime()) {
+      && Date.parse(previewStart.cst) >= Date.parse(updateStart.cst)) {
       throw invalid('前瞻直播必须早于版本更新')
     }
     if (updateStart === null && previewStart === null) {
@@ -750,43 +485,36 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     }
 
     const game = getGame(id)
-    info('%s agent override: version=%s update=%s→%s preview=%s→%s note=%s', game.name,
-      version ?? '—', short(updateStart), short(updateEnd), short(previewStart),
-      short(previewEnd), note ?? '—')
-    await withGame(id, async () => {
-      const gs = state.games[id]
-      const override = {
-        version,
-        updateStart,
-        updateEnd,
-        previewStart,
-        previewEnd,
-        note,
-        appliedAt: new Date().toISOString(),
-      }
-      const next = mergePlan(game, gs.officialPlan, override)
-      if (!planIsLive(next)) throw invalid('给出的时间不足以形成一条日程')
-      gs.override = override
-      gs.plan = next
-      gs.status = gs.lastError === null ? 'ok' : 'partial'
-      await reconcileEntries(game, next, Date.now())
-      await persist()
-    })
-
-    return publicGame(id)
+    info('%s forwarding official correction to gacha-calendar', game.name)
+    try {
+      await api.putOverride(id, {
+        version: version ?? undefined,
+        update_start: updateStart?.utc,
+        update_end: updateEnd?.utc,
+        preview_start: previewStart?.utc,
+        preview_end: previewEnd?.utc,
+        note: note ?? undefined,
+      })
+    } catch (error) {
+      warn('%s override forward failed: %s', game.name, error.message)
+      throw new GachaError('service_error', `写入 gacha-calendar 失败：${error.message}`)
+    }
+    await refreshGame(id, { signal: lifetime.signal })
+    const result = publicGame(id)
+    if (result.plan === null) throw invalid('给出的时间不足以形成一条日程')
+    return result
   }
 
   async function clearOverride(id) {
     if (!isGameId(id)) throw invalid(`未知游戏：${id}`)
-    info('%s agent override cleared', getGame(id).name)
-    await withGame(id, async () => {
-      const gs = state.games[id]
-      gs.override = null
-      gs.plan = gs.officialPlan
-      gs.status = gs.plan === null ? 'error' : gs.lastError === null ? 'ok' : 'partial'
-      await reconcileEntries(getGame(id), gs.plan, Date.now())
-      await persist()
-    })
+    info('%s clearing service override', getGame(id).name)
+    try {
+      await api.deleteOverride(id)
+    } catch (error) {
+      warn('%s override clear failed: %s', id, error.message)
+      throw new GachaError('service_error', `清除 gacha-calendar 覆盖失败：${error.message}`)
+    }
+    await refreshGame(id, { signal: lifetime.signal })
     return publicGame(id)
   }
 
@@ -795,6 +523,7 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
     '先调用 gacha_schedule（action=list）查看插件现有状态摘要；摘要不含完整推算依据，也不作为官方证据。',
     '再到各游戏 B 站官方账号查看最近的版本更新公告、前瞻预告和动态，重点确认官方是否已给出明确日期/时间；终末地的版本节奏不固定，必须优先核对。',
     '发现官方明确时间时，用 gacha_schedule（action=apply_official）按游戏写入 update_start / preview_start（带时区 ISO 8601，UTC+8）；只改本插件维护的日程，不要动其他条目。',
+    '需要阅读公告原文时可先用 action=posts 查看服务保存的原始公告与动态，再与官方渠道相互印证。',
     '仅在成功核对且没有新信息时回复「本周无变化」；检索工具缺失、官方来源无法访问或材料不足时说明未核实，不推断无变化。',
   ].join('\n')
 
@@ -883,6 +612,7 @@ export function createGachaService(ctx, { service, bilibili } = {}) {
   return {
     sourceId: SOURCE_ID,
     autoRefreshMs: AUTO_REFRESH_MS,
+    calendarApi: api,
     getPublicState,
     getPublicGame: publicGame,
     requestRefresh,

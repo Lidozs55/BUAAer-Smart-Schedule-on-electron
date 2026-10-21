@@ -57,25 +57,45 @@ const renderWatch = value => {
   return value.reason ?? '周检未开启。'
 }
 
+const renderPosts = value => {
+  const rows = Array.isArray(value?.data) ? value.data : []
+  const pagination = value?.pagination
+  const header = pagination
+    ? `原始公告 ${pagination.total} 条（第 ${pagination.page}/${pagination.total_pages} 页，时间均为 UTC）`
+    : '原始公告'
+  const lines = rows.map(row =>
+    `${row.game_name}［${row.source_type}］${String(row.title ?? '').slice(0, 60)}`
+    + `\n  ${row.publish_time?.utc ?? '—'} ${row.url}`)
+  return [header, ...lines].join('\n')
+}
+
 export function registerGachaTools(ctx, service) {
   return ctx.tools.register(defineTool({
     name: 'gacha_schedule',
     description: [
       '二游前瞻日程：查询/刷新原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环的版本更新与前瞻直播时间，',
-      '或核对官方时间：前瞻直播同步至日程，版本更新只保存来源信息。只能写这些二游条目，不能改用户的其他日程。',
-      'action=list 查看；refresh 立即刷新；apply_official 写入官方时间；watch 开启/关闭每周 Agent 核对。',
+      '或核对官方时间：前瞻直播同步至日程，版本更新只保存来源信息。数据来自 gacha-calendar 服务（B 站官方公告采集与推算）。',
+      'action=list 查看；refresh 立即刷新；posts 读取服务保存的原始公告/动态；',
+      'apply_official 写入官方时间（转发到服务）；watch 开启/关闭每周 Agent 核对。',
     ].join(''),
     parameters: {
       action: {
         type: 'string',
-        enum: ['list', 'refresh', 'apply_official', 'watch'],
+        enum: ['list', 'refresh', 'posts', 'apply_official', 'watch'],
         required: true,
-        description: 'list 查看 / refresh 刷新 / apply_official 写入官方时间 / watch 周检开关',
+        description: 'list 查看 / refresh 刷新 / posts 原始公告 / apply_official 写入官方时间 / watch 周检开关',
       },
       game: {
         type: 'string',
         enum: GAME_IDS,
-        description: '游戏 id；refresh 省略表示全部，apply_official 必填',
+        description: '游戏 id；refresh/posts/apply_official 使用，refresh 与 posts 省略表示全部',
+      },
+      page: { type: 'number', description: 'posts 用；页码，默认 1' },
+      page_size: { type: 'number', description: 'posts 用；每页条数，默认 20，最大 100' },
+      type: {
+        type: 'string',
+        enum: ['article', 'dynamic', 'video'],
+        description: 'posts 用；按来源类型过滤：专栏公告/官方动态/官方视频',
       },
       update_start: {
         type: 'string',
@@ -104,6 +124,7 @@ export function registerGachaTools(ctx, service) {
         switch (args.action) {
           case 'list': return [{ type: 'text', text: renderState(value) }]
           case 'refresh': return [{ type: 'text', text: renderRefresh(value) }]
+          case 'posts': return [{ type: 'text', text: renderPosts(value) }]
           case 'apply_official': return [{ type: 'text', text: renderApply(value) }]
           case 'watch': return [{ type: 'text', text: renderWatch(value) }]
           default: return [{ type: 'text', text: '完成' }]
@@ -122,6 +143,15 @@ export function registerGachaTools(ctx, service) {
             results: await service.requestRefresh(
               args.game === undefined ? undefined : [args.game]),
           }
+        case 'posts': {
+          const page = await service.calendarApi.posts({
+            gameId: args.game,
+            page: args.page ?? 1,
+            pageSize: Math.min(Math.max(args.page_size ?? 20, 1), 100),
+            type: args.type,
+          })
+          return page
+        }
         case 'apply_official': {
           if (args.game === undefined) throw new Error('apply_official 需要 game')
           if (args.clear === true) return service.clearOverride(args.game)
