@@ -1,14 +1,15 @@
 # DSH 插件开发文档
 
-本目录是 BUAAer 智能日程的 DSH/Cordis 插件开发文档。当前由三个 bundle 组成：日程核心
+本目录是 BUAAer 智能日程的 DSH/Cordis 插件开发文档。当前由四个 bundle 组成：日程核心
 `@lidozs55/dsh-schedule`、北航来源适配器 `@buaaer/dsh-schedule-buaa`、桌宠桥
-`@lidozs55/dsh-schedule-bridge`。
+`@lidozs55/dsh-schedule-bridge`、二游前瞻来源 `@lidozs55/dsh-schedule-gacha`。
 
 写作前提：**读者此前没有接触过 DSH 插件开发**——所以这里既有"本项目长什么样"，也有"DSH 侧接口到底长什么样"。
 
-> **当前状态（2026-10-20）**：核心/来源拆分完成，核心代码在 `dsh-plugin/dsh-schedule/`，
+> **当前状态（2026-10-21）**：核心/来源拆分完成，核心代码在 `dsh-plugin/dsh-schedule/`，
 > 北航适配器在 `dsh-plugin/dsh-schedule-buaa/`；桌宠桥 `dsh-plugin/dsh-schedule-bridge/`
-> 保持 v1（`09`）。架构基线见 `00`，新增来源的契约见 `11`。
+> 已到设计 v2（`09`）；二游前瞻适配器在 `dsh-plugin/dsh-schedule-gacha/`（`12`）。
+> 架构基线见 `00`，新增来源的契约见 `11`。
 
 ---
 
@@ -24,9 +25,10 @@
 | `05-time-and-background.md` | `ctx.timer` / `ctx.jobs` / `ctx.schedule` / 人类命令；提醒与长任务怎么做 | 做提醒、同步、后台任务时 |
 | `06-tool-and-agent.md` | `defineTool` 与 `ToolDefinition`；描述与 schema 规范；"一个操作两个调用者"；扩展点强弱；反模式 | 要暴露能力给 Agent 时 |
 | `08-workflow-and-verification.md` | 开发循环（含 scratch web 宿主）、自检清单、安装与返回值语义、验收清单、排查表、禁忌汇总 | 每次交付前 |
-| `09-vivarium-bridge.md` | 桌宠桥 `@lidozs55/dsh-schedule-bridge`（已落地 v1）：职责边界、提醒气泡/状态信号联动、接口契约、延后项 | 动桥插件 / 提醒对外表面时 |
+| `09-vivarium-bridge.md` | 桌宠桥 `@lidozs55/dsh-schedule-bridge`（已落地设计 v2）：职责边界、提醒气泡（任务/上课/条目）/任务状态上报、接口契约、延后项 | 动桥插件 / 提醒对外表面时 |
 | `10-ui-parity-rework.md` | UI 意图对齐返工**完成记录**：8 项根因与修复、scratch 验证结果、原版意图逐条清单 | 查交互设计意图时 |
 | `11-source-plugins.md` | 来源适配器契约：核心服务注入面、`sourceState`、路由/设置卡/tool 的拆分规则、新增来源步骤 | 接入新学校/导入格式时 |
+| `12-gacha-preview.md` | 二游前瞻适配器：B 站官方公告/视频、摘要优先解析、六款游戏推算规则、条目标记、Agent 写入与周检、设置卡 | 动二游来源 / 排查日期不准时 |
 
 推荐路线：
 
@@ -97,8 +99,8 @@ cordis_inspect_query { platform: "client", provider: "Theme",   method: "listTok
 - 旧实现（`electron/`、`backend/`、`frontend/`）已于 2026-10-20 删除（迁移结论保留在 `00` §7，代码看 git 历史）。
 - 包名/row id 现已定死：核心 `@lidozs55/dsh-schedule` / `schedule-core`，北航适配器
   `@buaaer/dsh-schedule-buaa` / `buaa-schedule`，桥 `@lidozs55/dsh-schedule-bridge` /
-  `schedule-bridge`；改名等于重装（核心与桥原为 `@buaaer/` 前缀，与北航无关，已改到
-  `@lidozs55/`）。
+  `schedule-bridge`，二游前瞻 `@lidozs55/dsh-schedule-gacha` / `gacha-schedule`；改名等于重装
+  （核心与桥原为 `@buaaer/` 前缀，与北航无关，已改到 `@lidozs55/`）。
 - 不要把 DSH 侧文档整段抄进代码注释：注释写"为什么"，接口细节留给文档与 `cordis_inspect_query`。
 
 ---

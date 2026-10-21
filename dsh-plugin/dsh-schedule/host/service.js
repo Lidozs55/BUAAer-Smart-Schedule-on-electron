@@ -400,8 +400,8 @@ export function createScheduleService(ctx, domain) {
      * Destructive reset behind the settings 清除全部日程数据 button: wipe
      * entries, tasks, course rules, and per-occurrence overrides. Meta
      * (term anchor) and per-source states survive — they are configuration,
-     * not data. Reminder mirroring reconciles off the change notification
-     * and deletes its now-stale durable records on its own.
+     * not data. Reminder derivation is stateless: the next poll simply sees
+     * no rows, so there are no durable reminder records to clean up.
      * @returns {object} `{ deleted }` total row count removed.
      */
     async clearAllData() {

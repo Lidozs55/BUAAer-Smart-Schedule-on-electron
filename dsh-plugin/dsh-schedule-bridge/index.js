@@ -3,8 +3,9 @@
  *
  * Boundary (unchanged from the 09 v1 ruling, restated for the feed era):
  * timing policy and truth stay in the MAIN plugin (reminder subsystem owns
- * lead minutes and the ctx.schedule mirror; session delivery remains the
- * fallback). The bridge only adds PET SURFACES on top of two read faces:
+ * lead minutes and the derived set; the main plugin's client poller is the
+ * core-owned Web Notification/toast surface). The bridge only adds PET
+ * SURFACES on top of two read faces:
  *
  *   1. Reminder notices — when a reminder moment arrives (task deadline,
  *      upcoming class, calendar entry — the core's derived set covers all
@@ -32,7 +33,7 @@ export const inject = ['scheduleCore', 'vivarium']
 
 export const Config = Schema.object({
   noticeOnReminder: Schema.boolean().default(true).description('提醒时刻到达时弹桌宠气泡（任务截止/上课/日程条目）'),
-  statusSignals: Schema.boolean().default(true).description('向桌宠广播任务状态信号（待办/过期/下一截止）'),
+  statusSignals: Schema.boolean().default(true).description('向基座上报任务状态事实（待办/过期/下一截止），宠物语义由基座推导'),
 })
 
 /** One poll cycle of the reminder watch — also the max earliness of a bubble. */

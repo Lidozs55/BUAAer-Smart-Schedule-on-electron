@@ -1,7 +1,8 @@
 # 11 · 来源适配器契约（新增学校/导入格式）
 
 > 一句话：**核心 `@lidozs55/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
-> 本仓库的北航适配器 `@buaaer/dsh-schedule-buaa` 是第一个实现，可当作模板。
+> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（课程/考试）与二游前瞻
+> `@lidozs55/dsh-schedule-gacha`（条目，见 `12-gacha-preview.md`）；前者适合当模板。
 
 ---
 
@@ -11,9 +12,11 @@
 @lidozs55/dsh-schedule          （核心：数据/服务/UI/提醒/通用工具）
         ▲              ▲
         │              │
-@buaaer/dsh-schedule-buaa   @lidozs55/dsh-schedule-bridge
-（北航来源适配器）           （桌宠表面，只读派生集）
+@buaaer/dsh-schedule-buaa   @lidozs55/dsh-schedule-gacha
+（北航来源适配器）           （二游前瞻，定时刷新）
 ```
+
+桌宠桥 `@lidozs55/dsh-schedule-bridge` 只读核心派生集，不参与这条写入链。
 
 硬规则：
 
@@ -90,7 +93,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 | domain / schema / 冲突检测 / 撤销 | ✅ | ❌ |
 | 日历面板、任务页、剪贴板、通用设置 | ✅ | ❌ |
 | 通用条目/任务 Agent 工具 | ✅ | ❌ |
-| 提醒子系统（提前量、`ctx.schedule` 镜像） | ✅ | ❌ |
+| 提醒子系统（提前量、无状态派生、页面轮询通知） | ✅ | ❌ |
 | `/api/schedule-core`、本格式 export/import | ✅ | ❌ |
 | SSO / 抓取 / 解析 | ❌ | ✅ |
 | 来源自己的 Agent 工具（如 `buaa_course_sync`） | ❌ | ✅ |

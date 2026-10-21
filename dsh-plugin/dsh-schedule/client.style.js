@@ -136,5 +136,13 @@ window.__ModuleLoader__.load({
 .bsch-rowline > .bsch-input, .bsch-rowline > .bsch-select { flex: 1; }
 
 .bsch-icon { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; color: inherit; }
+
+/* reminder notifications (client.notify.js): a transient card stack in the
+   host page; system notifications take over when the page is in the
+   background and permission is granted. */
+.bsch-toast-host { position: fixed; right: 16px; bottom: 16px; z-index: 200; display: flex; flex-direction: column; gap: 8px; max-width: min(340px, calc(100vw - 32px)); pointer-events: none; }
+.bsch-toast { pointer-events: auto; padding: 10px 12px; border-radius: var(--dsw-radius-md); border: 0.5px solid var(--dsw-alias-border-l2); background: var(--dsw-alias-bg-overlay); box-shadow: var(--dsw-elevation-panel); color: var(--dsw-alias-label-primary); }
+.bsch-toast-title { font-size: 13px; font-weight: 600; margin-bottom: 2px; }
+.bsch-toast-body { font-size: 12px; line-height: 1.5; color: var(--dsw-alias-label-secondary); }
 `,
 })

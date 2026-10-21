@@ -74,6 +74,11 @@ export function registerClientApi(ctx, deps) {
       try {
         const url = new URL(request.url)
         if (request.method === 'GET') {
+          // Reminder moments for the client notification poller. The set is
+          // derived fresh each call; the client dedups by `key` + `at`.
+          if (url.searchParams.get('view') === 'reminders') {
+            return ok(deps.service.upcomingReminders())
+          }
           // Reject malformed weekStart (e.g. the string 'undefined') instead
           // of letting it poison the snapshot (docs/10 P7).
           const raw = url.searchParams.get('weekStart')

@@ -1,8 +1,9 @@
 # 09 · vivarium 桥插件(`@lidozs55/dsh-schedule-bridge`)
 
-> **状态:已立项并落地 v1(2026-10-19)**,位于 `dsh-plugin/dsh-schedule-bridge/`(本仓库,
-> host-only bundle,无 client 半、无 UI)。v1 交付两条联动:提醒气泡(任务截止/上课/日程
-> 条目) + 任务状态上报。
+> **状态:已立项并落地设计 v2(2026-10-21;包版本 0.1.0)**,位于 `dsh-plugin/dsh-schedule-bridge/`(本仓库,
+> host-only bundle,无 client 半、无 UI)。v2 在 v1 的两条联动上扩展:提醒气泡覆盖任务截止/
+> 上课/日程条目三类,任务状态改走基座 `tasks.report`(vivarium §4c/ADR-013)。v1 的边界
+> (时序策略归核心、桥只做表面、读派生集为主且唯一写面是气泡「已完成」)不变。
 > 拖拽收纳(文本拖给桌宠→Agent 落库)待 vivarium 基座提供外部拖放目标 API 后立项——
 > 契约 v1(clause §2 interactions.drag)只有宠物自身的 move/throw,无内容拖入面。
 
@@ -12,37 +13,40 @@
 
 | 插件 | 拥有 | 不拥有 |
 |---|---|---|
-| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、`ctx.schedule` 镜像与撤销、投递会话、`upcomingReminders()` 派生集) | 投递表面;桌宠概念;任何学校/导入来源 |
+| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、无状态 `upcomingReminders()` 派生集、页面 30s 轮询 + Web Notification/toast) | 桌宠概念;任何学校/导入来源;Agent 会话投递 |
 | 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、整学期教务导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
-| 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(含「已完成」快捷动作)、任务状态上报(基座 `tasks` 状态面) | 数据副本;提醒策略与时序真相;宠物语义(逾期担忧/清空庆祝的推导归基座);UI |
+| 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(任务含「已完成」快捷动作,上课/条目仅「知道了」)、任务状态上报(基座 `tasks` 状态面) | 数据副本;提醒策略与时序真相;宠物语义(逾期担忧/清空庆祝的推导归基座);UI |
 
-时序真相只有一个(`ctx.schedule`,归核心插件);投递表面可以有多个(会话消息兜底,桌宠气泡增强)。
-桌宠关闭、桥卸载、vivarium 整个不存在——提醒仍完整可用。桥 `inject: ['scheduleCore', 'vivarium']`,
-任一缺席则 cordis 把桥 park 掉,核心插件无感。来源适配器同理:`inject: ['scheduleCore', ...]`,
-卸载北航插件不影响已有课程/任务/条目与提醒。
+提醒的时序真相只有一个:核心 `service.upcomingReminders()` 纯派生,任务/上课/条目三类同权。
+投递表面可以有多个,都读同一派生集:**页面通知**(核心 `client.notify.js`,30s 轮询 + Web
+Notification/页面内 toast)和**桌宠气泡**(桥,可选增强)。两者都不写 `ctx.schedule`、不建
+Agent 会话、不触发 LLM 轮次。桥 `inject: ['scheduleCore', 'vivarium']`,任一缺席则 cordis 把桥
+park 掉,核心插件无感;来源适配器同理:`inject: ['scheduleCore', ...]`,卸载北航插件不影响
+已有课程/任务/条目与提醒。
 
-## 2. v1 两条联动(已实现)
+## 2. v2 两条联动(已实现)
 
 ### 2.1 提醒气泡(notice)
 
 核心插件派生「提醒时刻」集合,**覆盖三类来源**(2026-10-21 起):任务截止、上课(周课表
 occurrence 投影,停课不提醒)、日程条目(教务导入的考试/会议在这里,不在任务表;考试类
-条目走考试提前量)。**提前量策略只存核心 Config 一处,桥不自配**;上课/条目不镜像
-`ctx.schedule`——一节课一条 agent 提醒是骚扰,桌宠气泡就是恰当表面(会话兜底仅任务享有)。
+条目走考试提前量)。**提前量策略只存核心 Config 一处,桥不自配**;三类都只是派生,不写
+`ctx.schedule`、不建 Agent 会话——提醒是通知,不是自动化任务。
 桥每 60s 读 `service.upcomingReminders()`(条目带 `kind: 'task'|'class'|'entry'` 与
 确定性 `key`),提醒时刻进入 `[at−60s, at+60s]` 窗口即 `ctx.vivarium.notices.post`:
 
 - `id = sched-rem-<key>`(key 由核心给出:任务 `<taskId>`、上课 `class-<courseId>@<日期>`
   ——去重键含日期、条目 `entry-<id>`;重复 post 被 broker 以 duplicate-id 拒绝,天然去重);
 - `kind` 决定文案与动作:**任务**——「知道了」+「已完成」,点已完成直接把任务置 completed
-  (`service.setTaskCompleted`,这是 v1 最有价值的 UX);**上课**——教室随文案,「知道了」;
+  (`service.setTaskCompleted`,这是桥最有价值的 UX);**上课**——教室随文案,「知道了」;
   **条目**——类别标签(考试/会议/…;全天条目显示日期+「全天」),「知道了」;
-- `ttlMs = 30min`,过期不重弹(任务由会话投递兜底);
+- `ttlMs = 30min`,过期不重弹;
 - 用户点了哪个动作,broker 的 `settled(id)` Promise 就以该 action id 结算。
 
 窗口语义说明:派生集只含未来时刻,一旦过点即从集合消失;60s 提前量 = 至多早一分钟弹出、
-绝不漏发。核心 Config 关闭提醒时派生集为空,气泡同步静默(策略一致性);「自动化任务」
-bundle 缺席只停会话镜像,派生集照常流动(桌宠气泡从不依赖它)。
+绝不漏发。核心 Config 关闭提醒时派生集为空,气泡与页面通知同步静默(策略一致性)。核心
+不再依赖 `schedule`/`sessionController`(00 §4.3),所以未启用「自动化任务」bundle 的 profile
+上桥照样工作;桥缺席时,核心页面的 `client.notify.js` 仍独立投递 Web Notification/toast。
 
 ### 2.2 任务状态上报(基座 §4c `tasks.report`,2026-10-21 重构)
 

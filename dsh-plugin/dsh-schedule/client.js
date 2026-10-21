@@ -1,11 +1,11 @@
 /**
  * Client half of @lidozs55/dsh-schedule. Loads the package-local chunks
  * (`require.async('./client.*.js')` — the module system's chunk protocol;
- * core must materialize before the chunks that require it), then
- * registers the `main` panel (日程/任务/剪贴板 tabs inside), its
- * `sidebar.panellist` entry, and the settings section. All registrations
- * ride `ctx.slots.inject` so declarations own their lifecycles; styles
- * inject through `ctx.effect`.
+ * core must materialize before the chunks that require it), then starts the
+ * reminder notification poller and registers the `main` panel
+ * (日程/任务/剪贴板 tabs inside), its `sidebar.panellist` entry, and the
+ * settings section. All registrations ride `ctx.slots.inject` so
+ * declarations own their lifecycles; styles inject through `ctx.effect`.
  */
 window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule',
@@ -39,6 +39,7 @@ window.__ModuleLoader__.load({
         // load order below is a dependency order — core first, then the
         // leaf chunks, then calendar which sync-requires them.
         const core = await require.async('./client.core.js')
+        const notify = await require.async('./client.notify.js')
         await require.async('./client.gridmath.js')
         await require.async('./client.weekgrid.js')
         await require.async('./client.editors.js')
@@ -75,6 +76,14 @@ window.__ModuleLoader__.load({
           },
         }
         const share = () => ({ env })
+
+        // Core-owned reminder surface: poll the host-derived set and raise a
+        // Web Notification (or an in-page toast) while the app is open. The
+        // pet bridge, when installed, is an additional surface over the same
+        // set — never a dependency.
+        ctx.effect(() => notify.startReminderNotifications({
+          api: env.api, timer: ctx.timer, t,
+        }), 'schedule: reminder notifications')
 
         ctx.slots.inject('main', () => ctx.slots.register(
           { name: 'main', key: 'schedule-calendar', locale: NS, inject: share }, CalendarPanel))

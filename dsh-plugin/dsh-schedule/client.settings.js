@@ -8,6 +8,7 @@ window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule/client.settings.js',
   factory: (require) => {
     const core = require('@lidozs55/dsh-schedule/client.core.js')
+    const notify = require('@lidozs55/dsh-schedule/client.notify.js')
     const { React, h, field, notifyDataChanged, ConfirmDialog } = core
     const { useState, useEffect } = React
 
@@ -22,8 +23,14 @@ window.__ModuleLoader__.load({
       const [status, setStatus] = useState(null)
       const [busy, setBusy] = useState(false)
       const [confirmClear, setConfirmClear] = useState(false)
+      const [notifyPermission, setNotifyPermission] = useState(() => notify.notificationStatus())
 
       useEffect(() => { void load() }, [])
+      useEffect(() => {
+        const update = () => setNotifyPermission(notify.notificationStatus())
+        window.addEventListener('focus', update)
+        return () => window.removeEventListener('focus', update)
+      }, [])
       async function load() {
         try {
           // Any snapshot carries the global meta; this week's is as good as any.
@@ -92,6 +99,26 @@ window.__ModuleLoader__.load({
         }
       }
 
+      const enableNotifications = async () => {
+        const next = await notify.requestBrowserNotifications()
+        setNotifyPermission(next)
+        if (next === 'granted') {
+          setStatus({ ok: true, text: t('settings.notifyGranted') })
+        } else if (next === 'denied') {
+          setStatus({ ok: false, text: t('settings.notifyDenied') })
+        } else if (next === 'unsupported') {
+          setStatus({ ok: false, text: t('settings.notifyUnsupported') })
+        }
+      }
+
+      const notifyText = notifyPermission === 'granted'
+        ? t('settings.notifyGranted')
+        : notifyPermission === 'denied'
+          ? t('settings.notifyDenied')
+          : notifyPermission === 'unsupported'
+            ? t('settings.notifyUnsupported')
+            : t('settings.notifyHint')
+
       return h('div', { className: 'bsch-settings' },
         h('div', { className: 'bsch-card' },
           h('h3', null, t('panel.settings')),
@@ -106,6 +133,14 @@ window.__ModuleLoader__.load({
               className: 'bsch-btn is-primary', disabled: busy,
               onClick: () => void saveMeta({ termStart: meta?.termStart ?? '' }),
             }, t('entry.save')))),
+        h('div', { className: 'bsch-card' },
+          h('h3', null, t('settings.notifyTitle')),
+          h('div', { className: 'bsch-hint' }, notifyText),
+          notifyPermission === 'default' ? h('div', { className: 'bsch-rowline' },
+            h('span', { className: 'bsch-spacer' }),
+            h('button', {
+              className: 'bsch-btn', onClick: () => void enableNotifications(),
+            }, t('settings.notifyEnable'))) : null),
         h('div', { className: 'bsch-card' },
           h('h3', null, t('settings.dataTitle')),
           h('div', { className: 'bsch-rowline' },

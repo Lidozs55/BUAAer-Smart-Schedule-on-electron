@@ -7,16 +7,17 @@
  * and calendar entries — the 教务 import lands exams and meetings HERE,
  * not as tasks — had no reminder surface at all: the exact「有课有考试但
  * 忘了去」gap. Timing policy lives here and nowhere else (docs 00 §4.4):
- * this module applies the lead minutes; the bridge just posts whatever
- * comes out into the pet notice queue (contract §4b). These items are
- * deliberately NOT mirrored into ctx.schedule — a class meets several
- * times a week and one agent prompt per meeting is spam; the pet bubble
- * is the right weight (docs 09 §2.1).
+ * this module applies the lead minutes; presentation surfaces (the core
+ * client's polling notifier and/or the optional vivarium bridge) post
+ * whatever comes out (contract §4b). These items are deliberately NOT
+ * persisted as Agent jobs — a class meets several times a week and one
+ * prompt per meeting is spam. Without any presentation surface these
+ * reminders are not delivered; core does not depend on a pet.
  *
  * Item shape (superset of the task reminder's):
  *   { kind: 'class' | 'entry', key, title, at, start, ... }
  * `key` is deterministic and date-scoped wherever the source repeats
- * (`class-<courseId>@<baseDay>` — the 去重键要含日期 rule), so bridge-side
+ * (`class-<courseId>@<baseDay>` — the 去重键要含日期 rule), so consumer-side
  * notice dedup needs no memory of its own.
  */
 

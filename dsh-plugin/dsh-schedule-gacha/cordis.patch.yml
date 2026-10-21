@@ -1,0 +1,4 @@
+- insert:
+    - id: gacha-schedule
+      name: '@lidozs55/dsh-schedule-gacha'
+      config: {}

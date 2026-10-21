@@ -8,15 +8,18 @@
 
 ## 1. 当前形态与代码地图
 
-三个 bundle，依赖方向是单向的：
+四个 bundle，依赖方向是单向的：
 
 - **日程核心** `dsh-plugin/dsh-schedule/`（包名 `@lidozs55/dsh-schedule`，row id
   `schedule-core`）——通用日程数据、服务、工具、UI、提醒。不知道任何学校/导入来源。
 - **北航来源适配器** `dsh-plugin/dsh-schedule-buaa/`（`@buaaer/dsh-schedule-buaa`，
   row id `buaa-schedule`）——依赖核心注入的 `scheduleCore`，只拥有北航 SSO、
   教务同步与来源状态。
+- **二游前瞻来源** `dsh-plugin/dsh-schedule-gacha/`（`@lidozs55/dsh-schedule-gacha`，
+  row id `gacha-schedule`，见 `12`）——只读 B 站官方公告/视频，定时为六款游戏对账
+  「版本前瞻直播 / 版本更新」两条条目。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
-  见 `09`）——只依赖核心的读面与提醒派生集。
+  见 `09`）——只依赖核心的提醒派生集与任务完成写面（气泡上的「已完成」）。
 
 ```
 dsh-plugin/dsh-schedule/
@@ -32,9 +35,9 @@ dsh-plugin/dsh-schedule/
 │   ├── api.js            # /api/schedule-core 客户端数据通道
 │   ├── import.js         # 本插件 export 格式的回灌
 │   ├── schedule-reminders.js  # 上课/条目提醒时刻派生（纯函数，§4.4）
-│   └── reminders.js      # 提醒子系统（派生集 + ctx.schedule 镜像，§4.4）
+│   └── reminders.js      # 提醒派生（无状态、无会话投递，§4.4）
 ├── client.js             # Client 入口：依赖序装载分块 + 槽位注册（§6.2）
-└── client.*.js           # 分块：core/gridmath/weekgrid/editors/tasks/calendar/clipboard/settings/style
+└── client.*.js           # 分块：core/notify/gridmath/weekgrid/editors/tasks/calendar/clipboard/settings/style
 ```
 
 ```
@@ -51,6 +54,23 @@ dsh-plugin/dsh-schedule-buaa/
 │   ├── api.js            # /api/buaa-schedule（设置页通道）
 │   └── time.js           # 来源侧学期码/教学周换算（不 import 核心内部模块）
 └── client.js / client.settings.js  # 往核心的 schedule.settings.blocks 槽里追加设置卡
+```
+
+```
+dsh-plugin/dsh-schedule-gacha/
+├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
+├── cordis.patch.yml      # 插入 row gacha-schedule
+├── index.js              # inject: ['scheduleCore', 'connection', 'tools']；6 小时刷新
+├── host/
+│   ├── games.js          # 六款游戏的 mid / 标题正则 / 默认窗口与节奏 / 条目归属标记
+│   ├── bilibili.js       # 串行限流、匿名 cookie、按端点 Referer、瞬时错误重试
+│   ├── parse.js          # 公告/视频/动态的纯规则解析与 planNext 推算
+│   ├── state.js          # sourceState.gacha
+│   ├── service.js        # 摘要优先解析、条目对账、Agent 覆盖、周检登记
+│   ├── tools.js          # gacha_schedule
+│   └── api.js            # /api/gacha-schedule（设置页通道）
+├── client.js / client.settings.js  # 六款游戏开关 + 刷新 + Agent 核对入口
+└── test/parse.test.mjs   # 离线规则测试（node --test）
 ```
 
 数据流铁律：**一个操作只有一个实现**（核心服务方法）。来源插件通过
@@ -72,7 +92,7 @@ dsh-plugin/dsh-schedule-buaa/
 | # | 决策 |
 |---|---|
 | R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；移除自主调色体系；条目颜色 = 类别枚举 → token 映射（§3.3，唯一一处常量） |
-| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js`），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地 v1，见 `09`）：策略/真相在核心，投递表面（会话兜底 + 桌宠气泡）可多个 |
+| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js` 派生 + `client.notify.js` 轮询通知），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地设计 v2，见 `09`）：策略/真相在核心，投递表面（页面通知/Web Notification + 桌宠气泡）可多个，均不经过 Agent 会话 |
 | R3 | 主面板 = 同一面板内 `日程 \| 任务` 双 tab（窄幅侧栏设计），不搞左右分栏 |
 | R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `sched_*` 工具 |
 | R5 | 自动排期、休息条目、由任务生成条目：**不做**（原实现本就是坏的/恒空的） |
@@ -135,24 +155,24 @@ global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
 | root-scope 页面的写路径 | `ctx.connection.fetch.register()` 在共享 `/api` 前缀上挂精确路由 `/api/schedule-core`（GET snapshot + POST op）。浏览器信任围栏 + cookie 鉴权先于插件 handler，与 Remote RPC 同级可信。裸 `ctx.webServer` 路由**无鉴权**，不承载业务写 |
 | 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
 | 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；未来桥走 `inject: ['scheduleCore']` |
-| 提醒投递 | 镜像进 `ctx.schedule`，投递回绑定 Session（一次性 `sessionController.create({})` 创建，id 存 domain）；记录 title 前缀 `[sched:<taskId>]` 供 resync 识别；对外派生集 = `service.upcomingReminders()` |
+| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
 | 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（课程现算也参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（工具参数/UI 确认框）放行 |
 | "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示；提醒子系统不依赖它 |
 
 ### 4.3 Host 的 inject 声明（重要权衡）
 
-`index.js` 目前声明 **六个全部为必需**：
+`index.js` 目前声明 **四个全部为必需**：
 
 ```js
-export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', 'schedule', 'sessionController']
+export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 ```
 
 - **为什么**：`ctx.get()` 是即时查找、无激活顺序保证——本包先于 `connection` 激活时 get 返回 undefined，静默降级导致 `/api` 路由从未注册（2026-10-17 实测 404 事故）。必需 inject 让 cordis park 到提供者激活为止，是唯一确定性契约。
-- 代价（已知限制）：profile 里缺任一提供者（典型：未启用「自动化任务」bundle 的 `schedule`）时
-  **整个核心插件不激活**。web/desktop 部署的 base + web-app bundle 恒提供全部六个，所以当前
-  可接受；若未来要支持精简 profile，须把 `schedule`/`sessionController` 降回可选并解决
-  "提供者后激活"的监听问题（vendored cordis 的动态插件无 `ctx.inject` 晚绑定动词）。
-- `if (ctx.get(…))` 守卫保留为防御性兜底，不再是主要机制。
+- 代价（已知限制）：profile 里缺任一提供者时**整个核心插件不激活**。web/desktop 部署的
+  base + web-app bundle 恒提供这四个，所以当前可接受。
+- `schedule`/`sessionController` **不再是依赖**：提醒不经过 Session，核心在未启用「自动化任务」
+  bundle 的 profile 上也能正常激活。`if (ctx.get(…))` 守卫保留为防御性兜底。
+- `ctx.timer` 是混入 context 的助手，不需要 inject；`client.js` 已声明客户端侧的 `timer`。
 
 **来源适配器** `@buaaer/dsh-schedule-buaa` 声明 `inject = ['scheduleCore', 'connection', 'tools']`：
 `scheduleCore` 是硬依赖（核心未激活则 cordis park 住来源插件）；`connection`/`tools` 是
@@ -161,7 +181,17 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 
 ### 4.4 提醒子系统
 
-`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 开关与提前量（任务按作业/考试/其他三档；上课 `classLeadMinutes`；条目 `eventLeadMinutes`，考试类条目走考试档）。派生集 `service.upcomingReminders()` 覆盖三类提醒时刻，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`：任务截止（`host/reminders.js` 内联派生）+ 上课/条目（`host/schedule-reminders.js` 纯函数：`weekOccurrences` 投影 + 8 天条目窗，停课不提醒）。只有**任务**镜像进 `ctx.schedule`（`service.subscribe()` 驱动 diff 后 create/delete `at` 提醒；上课一节一条 agent 提醒是骚扰，气泡即表面）；`remindersEnabled: false` 派生集为空（策略一致性），bundle 缺席只停镜像不停派生；任何故障只降级不影响日历主功能。提醒持久状态归 `ctx.schedule`，domain 不镜像"是否已提醒"。
+`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 开关与提前量（任务按作业/考试/其他三档；上课 `classLeadMinutes`；条目 `eventLeadMinutes`，考试类条目走考试档）。派生集 `service.upcomingReminders()` 覆盖三类提醒时刻，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`：任务截止（`host/reminders.js` 内联派生）+ 上课/条目（`host/schedule-reminders.js` 纯函数：`weekOccurrences` 投影 + 8 天条目窗，停课不提醒）。
+
+**提醒是纯派生，不是 Agent 任务**：不写 `ctx.schedule`、不建 Session、不触发 LLM 轮次、无持久状态。
+投递面只有两个，都读同一派生集：
+
+- `client.notify.js`：页面打开时每 30s 轮询 `GET /api/schedule-core?view=reminders`，在 `at−60s`
+  窗口内用 Web Notification 呈现（未授权/前台时退化为页面内 toast），按 `key@at` 去重；
+- 桌宠桥：`ctx.vivarium.notices.post` 气泡（可选增强，核心不依赖）。
+
+`remindersEnabled: false` 时派生集为空，页面通知与桌宠气泡同步静默（策略一致性）。页面关闭后
+轮询停止，这是 Web Notification 方案的固有限制；装了桌宠桥时气泡可独立于页面运行。
 
 ---
 
@@ -186,8 +216,16 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 `sourceState.buaa = { buaaId, termCode }` 仅供显示。它不注册日历面板/条目工具，也没有 `/buaa-sync`
 （密码不能出现在命令输入里）。
 
+**二游前瞻来源插件**：Agent 工具 `gacha_schedule`（`list/refresh/apply_official/watch`）；
+客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。只读 B 站
+官方公告/视频，为原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环各维护
+「版本前瞻直播」「版本更新」两条条目；条目带 `[gacha:<id>]` 归属标记，只删改本源条目，
+不触碰课程、考试或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
+后台每 6 小时刷新（`ctx.timer`，缺失时只停自动刷新，工具与设置卡仍可用）。
+
 **systemPrompt 常驻段**：核心段只保留教学周与工具入口（细则在 `schedule` skill）+ 北航段
-（`buaa_course_sync`、密码仅当次使用、整学期快照语义）。
+（`buaa_course_sync`、密码仅当次使用、整学期快照语义）+ 二游段（`gacha_schedule`、
+官方时间写回、`[gacha:<id>]` 归属）。
 
 ---
 
@@ -217,7 +255,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 - 无参命令**整个省略 `input`**（`input: { hint: '' }` 抛 "input hint must not be empty"）。
 - API 查询参数做 nullish 与格式校验（双端），防止 `"undefined"` 字符串污染快照字段（2026-10-18 aN-NaN 事故链）。
 - CSS 只用 `--dsw-*` token，零颜色字面量；圆角/阴影走 token 刻度；locale zh/en 双语强制。
-- 提醒子系统 `schedule`/`sessionController` 的取用形态见 §4.3 的权衡说明。
+- 提醒子系统不依赖 `schedule`/`sessionController`；通知面见 §4.4 与 `client.notify.js`。
 
 ---
 
@@ -227,10 +265,11 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt', '
 2026-10-20 全部移除**，考古请看 git 历史。逐函数原子功能枚举（约 330 条）的判定结论保留如下：
 
 **已迁移（含等价重设计）**：周视图全部交互（拖选/幽灵/拖动/缩放/undo-redo/黑名单/4–28 轴/
-任意锚点窗口/回今天/键盘）、任务筛选/排序/统计/进度环/即将到期条、条目与任务编辑器
+任意锚点窗口/回今天/键盘）、快速跳转小日历 + 重要度色点、批量新建日程（BatchEditor、
+host `batchCreateEntries`）、任务筛选/排序/统计/进度环/即将到期条、条目与任务编辑器
 （含删除确认——核对时补上的最后缺口）、冲突检测（内置到全部写路径，替代独立接口）、
 教务同步（SSO 登录、整学期课表一次拉取、考试、周次归一化、整份替换）、
-提醒镜像（任务截止，含作业/考试/其他三档提前量）、
+提醒派发（任务截止/上课/条目统一派生 + 页面 Web Notification/toast + 可选桌宠气泡，作业/考试/其他/上课/条目提前量）、
 剪贴板队列（语义改为"交给 Agent 落库"）、设置页（学号/学期起点/同步/导入导出/清空）。
 
 **明确不迁移**（依据 §2 R 决策，勿"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与
@@ -241,17 +280,15 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 （已知缺陷，不修）、手动课程 CRUD（同步+导入已覆盖获取；一次性课用条目替代）、
 同步成功后自动刷新课表的颜色联动（完成态只改渲染不改数据）。
 
-**延后项**（有真实价值，按需立项）：快速跳转月历 + 重要度色点（表头点击跳锚点已实现）、
-批量日常任务（BatchAddModal，host 侧 `batchCreateEntries` 已就绪）、浏览器系统通知
-（ctx.schedule 会话投递已覆盖主路径；课程/条目提醒 2026-10-21 已入提醒子系统派生集，
-桌宠气泡投递，见 §4.4 与 `09`）。
+**延后项**（有真实价值，按需立项）：桥侧拖拽收纳/常驻徽标见 `09` §4。
+页面提醒已落地（`client.notify.js`，2026-10-21）：30s 轮询 + Web Notification，未授权时页面内 toast；
+上课/条目与任务共用同一派生集。页面关闭后的系统级通知仍取决于桌宠桥或浏览器能力。
 
 旧实现的已知缺陷清单（时区混存、日期窗口 +1 天、读接口带删除副作用等）在迁移中已全部
 修掉；如需考古看 git 历史里的 `07-migration-map.md`。
 
 **二轮 subagent 函数级复审的收敛结论（2026-10-19，判定完毕勿重开）**：
-- M1 考试两级提醒（提前 1 天 + 当天）**有意收敛为单档**提前量，Config 可调（R6 决策：DSH
-  提醒通道单次投递，两档由 Config 配多任务等价实现）。
+- M1 考试两级提醒（提前 1 天 + 当天）**有意收敛为单档**提前量，Config 可调（R6 决策：提醒通道单次投递，两档由 Config 配多任务等价实现）。
 - M6 考试接口的**结束时间不进 `due`**：任务模型只认截止时刻，`endTime` 写进备注（`结束：15:20`），
   不另造字段。
 - M8 教务请求**不带 Referer**：当前实测可用（问题 1 修复后 302 链路通）；若日后教务加校验，
@@ -276,17 +313,18 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 
 ---
 
-## 8. 验收状态（2026-10-20）
+## 8. 验收状态（2026-10-21）
 
-- **插件拆分（本轮）**：核心 / 北航来源适配器 / 桌宠桥三个 bundle，依赖方向为
-  核心 ← 北航、核心 ← 桥。核心不再包含 SSO、教务同步、旧库导入或 `buaaId`/`termCode`
-  业务逻辑；北航插件通过 `inject: ['scheduleCore']` 写入同一服务。
+- **插件拆分（本轮）**：核心 / 北航来源适配器 / 二游前瞻来源 / 桌宠桥四个 bundle，依赖方向为
+  核心 ← 北航、核心 ← 二游前瞻、核心 ← 桥。核心不再包含 SSO、教务同步、旧库导入或 `buaaId`/`termCode`
+  业务逻辑；北航与二游前瞻都通过 `inject: ['scheduleCore']` 写入同一服务。
 - **UI 意图对齐返工（`10`）已完成**：P2–P8 在 scratch web 宿主经浏览器自动化逐项验证；P1（设置页
   `inject: share`）随后在**真实桌面宿主**验证通过（应用内设置 → 日程设置卡渲染）。
 - **真实桌面宿主（profile `…\.desktop-build\development\home\profiles\desktop`，`link:` 安装）**：
-  拆分后需重新安装 `@buaaer/dsh-schedule-buaa` 并重启；核心与桥仍为 link 安装。
+  拆分后需重新安装 `@buaaer/dsh-schedule-buaa` 并重启；二游前瞻为新 bundle，同样需安装后重启；
+  核心与桥仍为 link 安装。
 - **未验证**（后续按需）：键盘快捷键手感、BUAA 同步全流程（需真实学号密码）、提醒投递与
-  桥气泡的真机触发、明暗双主题逐页核对。
+  桥气泡的真机触发（任务/上课/条目三类）、明暗双主题逐页核对。
 - **二轮修订（2026-10-19 深夜，`10` §6）**：真机实测 8+3 问题全部修复并在 scratch 宿主逐项
   验证通过——SSO 401、网格对齐、跨列拖、拖后误点击、幽灵、跳转小日历、剪贴板并入 tab、
   批量新建、中性色提亮、Windows 风格交互模型（右键建幽灵/双击编辑/框选/Del/整批 undo）。
@@ -295,3 +333,8 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   根 `package.json` 精简为仓库元信息（原 electron-builder/cpolar 配置随旧实现作废）；
   根 README 已更新。（`/buaa-import` 与 `scripts/export-legacy-db.mjs` 更早已移除，旧库迁移通道关闭。）
   仓库现在只有 `docs/`、`dsh-plugin/`、`README.md`、`package.json` 四项。
+- **提醒扩展（2026-10-21）**：`host/schedule-reminders.js` 纯函数覆盖上课/条目派生
+  （`node --test` 7 项全绿）；桥按 `kind` 分支，任务可气泡完成。真机触发仍未验证。
+- **二游前瞻（2026-10-21）**：新增第四个 bundle `@lidozs55/dsh-schedule-gacha`
+  （`12`），同样只依赖 `scheduleCore`；单测 16 项全绿，六款游戏真实接口冒烟全部 `ok`。
+  它只读写自己标记的两条条目/游戏，不触碰课程、考试或其他来源。

@@ -1,0 +1,30 @@
+{
+  "name": "@lidozs55/dsh-schedule-gacha",
+  "version": "0.1.0",
+  "description": "Gacha preview tracker: official Bilibili announcements for Genshin, HSR, ZZZ, WuWa, Endfield and NTE.",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-workspace",
+        "@lidozs55/dsh-schedule"
+      ]
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2"
+  }
+}

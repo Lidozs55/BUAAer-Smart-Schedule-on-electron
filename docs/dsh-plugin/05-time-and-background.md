@@ -1,7 +1,9 @@
 # 05 · 时间、提醒与后台作业
 
 > 本项目的核心需求之一就是"到点提醒"和"跑一会儿的同步"。DSH 侧有三层机制，别用错：
-> **进程内定时器**（`ctx.timer`）→ **可观察的后台作业**（`ctx.jobs`）→ **持久提醒**（`ctx.schedule`）。
+> **进程内定时器**（`ctx.timer`）→ **可观察的后台作业**（`ctx.jobs`）→ **平台自动化任务**（`ctx.schedule`）。
+> 日程提醒**不使用** `ctx.schedule`：它绑定 Session、会唤醒 Agent，是自动化任务而非通知；
+> 本项目改为无状态派生 + 页面轮询 + Web Notification（§4）。
 > 签名实测于本机 `0.2.0-rc.2`；`ScheduleRecord` 等类型来自官方文档与包 README。
 
 ---
@@ -12,7 +14,8 @@
 |---|---|---|
 | 防抖搜索、节流刷新、界面倒计时、"5 分钟后重试一次" | `ctx.timer` | 进程内、随插件卸载自动清理 |
 | 跑几十秒的活儿：抓 7 天课表、批量导出、OCR | `ctx.jobs` | 有 id、有状态、有输出环、可取消、能让 UI 流式看 |
-| "明天 8:00 提醒我交作业"、"每周一晚提醒" | `ctx.schedule` | 持久化、跨重启、到点投递**回原 Session** |
+| 页面内提醒（任务/上课/条目） | 核心 `host/reminders.js` 派生 + `client.notify.js` 30s 轮询 + Web Notification | 纯通知、不建会话、不耗 token；页面打开时有效 |
+| 让 Agent 按周期主动干活（如二游周检） | `ctx.schedule` | 真正需要 Agent 的任务；绑定 Session、会耗 token |
 | 让 Agent 因为定时事件主动干活 | `agent.followup()` | 会唤醒 agent；`agent.inject()` **不会** |
 
 ---
@@ -98,17 +101,17 @@ interface JobOutcome {
 - **`start` 在"没有已挂载的 job controller 服务于该 owner"时拒绝开工**——也就是说作业的 owner 必须是某个 Session，或该 job 明确无主。
 - 输出是**按绝对字节偏移**读取的：`read(id)` 用游标消费，`readAt(id, from)` 让任意多个观察者各自读，互不干扰。`JobChannel` 区分 `stdout` / `stderr` / `log`。生产方的 `JobOutcome.result` 只在**结算后的第一次 read** 交出。
 - **结算先到先得**；已结算的记录会一直留在列表里，直到 owner 释放、服务释放或显式 `remove`。
-- **作业不是持久化的**：文档只承诺"活得比生产方与 controller 的 fiber 更久"，**没有任何地方承诺跨 Host 重启存活**。跨重启要用 `ctx.schedule` 或存储 domain。
+- **作业不是持久化的**：文档只承诺"活得比生产方与 controller 的 fiber 更久"，**没有任何地方承诺跨 Host 重启存活**。跨重启要用存储 domain；`ctx.schedule` 只用于需要 Agent 的定时任务。
 - 本地实现的默认限制：`maxConcurrentJobsPerOwner` 10（按精确 owner 计 `running` + `stopping`，无主作业共用一个桶）、`retainBytes` 256 KiB、`settledRetainBytes` 16 KiB、`pumpPollMs` 150。
 - 浏览器侧有一个现成的作业列表面板（`@deepseek-ai/dsh-client-ui-jobs`）；`ctx.jobController` 提供 `@Remote({ mode: 'stream' }) list/follow` 与 `@Remote('kill') kill`。**不要**自己再写一套轮询。
 
 本项目**不使用 jobs**：教务同步是"一次登录 + 两个整学期请求"，秒级完成，同步跑在工具调用里
 （`buaa_course_sync` 的 `timeoutMs` 180 s）比给用户维护一个作业列表更合适。需要多步进度时再考虑
-`ctx.jobs`（它不跨重启，长期任务仍应落 `ctx.schedule` 或存储 domain）。
+`ctx.jobs`（它不跨重启，长期任务仍应落存储 domain；只有确实需要 Agent 定时干活时才用 `ctx.schedule`）。
 
 ---
 
-## 4. `ctx.schedule`：持久提醒（本项目的"提醒服务"）
+## 4. `ctx.schedule`：平台自动化任务（日程提醒不使用）
 
 ```ts
 async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>
@@ -119,37 +122,38 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 @Remote('update')  async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>
 ```
 
-- 服务描述："Shared management service; reads, deletion, and timing edits never activate a Session."
-- 事件：`'schedule/changed'()` —— 持久任务集变化，客户端重新拉取全局与 Session 活跃目录。
-- 记录持久在 `schedule` 存储 domain 的 `tasks` 表（version 1），**绑定原 `sessionId`**，带 `status: 'active' | 'inactive'` 与可选 `lastDelivery`；`title` 去除首尾空白后必须非空且 ≤ 120 字符；缺状态的记录规范化为 `active`；创建时把目标时间规范化为 **RFC 3339 UTC**。
-- 六选一的创建选择器（`ScheduleCreateRequest` 里恰好给一个）：`after_seconds` / `at` / `every_seconds` / `daily` / `weekly` / `cron`，外加必填 `prompt` 与 `title`。
-  - `every_seconds` 最小 **60**；`daily`/`weekly` 必须显式给 IANA `time_zone`；`cron` 是 5 段 Vixie 表达式 + `time_zone`。
-- 投递：通过 `sessionController.resolveAgent` 解析原会话；插件来源的 `followup()` 同步把消息追加到会话收件箱，会话 flush 成功后确认持久投递；随后更新 `lastDelivery` 并把回执与提示文本快照追加进 `deliveryHistory.records`。宿主启动时读取持久任务并把定时器设为最早的活动目标；重启后会补投"逾期的一次性提醒"或"每条重复任务最近错过的一次"；同一 Session 的到期重复任务可以合并成一条消息。消息带 `[SCHEDULE REMINDER]` / `[SCHEDULE REMINDER BATCH]` 框架。
+- **语义**：`create(sessionId, …)` 绑定一个 Session；到点由宿主 `sessionController.resolveAgent`
+  恢复该会话，把 `prompt` 追加进收件箱并让 Agent 跑一轮。它是“定时 Agent 任务”，不是通知服务。
+- 记录持久在 `schedule` 存储 domain，带 `status` / `lastDelivery`，跨重启补投；同一 Session 的
+  到期重复任务可合并成一条消息。
+- 官方 Web profile 默认不含「自动化任务」bundle；要启用需在插件管理页打开它。该能力也不能
+  挂在 headless / 仅 SDK 的部署里。
 
-### ⚠️ 重要前提：Schedule 是可选的
+### 本项目为什么不用它做提醒（2026-10-21 决策）
 
-实测本机 profile 的 Config 目录里**没有任何 `@deepseek-ai/dsh-schedule` 条目**（193 个 entry 里 0 命中），即当前部署确实没有挂载它——所以判空分支不是形式主义，是必要条件。
+日程提醒曾把任务截止镜像成 `ctx.schedule` 记录，投递到一个专用会话。这个做法混淆了两个
+同名的 “task”：
 
-官方发布版 Web profile **不含 Schedule**。要启用：在插件管理页的"官方"分组里启用**「自动化任务」**，它会把可选实验性 bundle `@deepseek-ai/dsh-experimental-schedule-bundle` 连同时钟上下文加入组合。另外：Schedule **不能**挂在 headless / 仅 SDK 的部署里——投递需要 Host 的 Web Session controller 与 Session 持久化后端。
+| 概念 | 业务任务 | `ctx.schedule` 的 task |
+|---|---|---|
+| 含义 | 作业/考试/待办，有截止时间 | 定时执行的 Agent 作业 |
+| 到点后 | 应该通知用户 | 唤醒 Agent 跑 prompt |
+| 成本 | 一条通知 | 一次 Agent 轮次 |
+| 可见性 | 通知/角标/气泡 | 用户要打开那个会话 |
 
-因此插件里取用 `ctx.schedule` 时要显式决定形态：
+结果就是：每条提醒花 token、用户不打开会话就查收不到、还要维护专用会话并受归档限制。
 
-```js
-const schedule = ctx.get('schedule');
-if (!schedule) return;   // 可选形态：该 profile 没启用自动化任务，安静降级
-```
+**现在的实现**（`00` §4.4、`09` §2.1）：
 
-> **本插件的实际选择**（2026-10-17 权衡，见 `00-architecture.md` §4.3）：`schedule`/`sessionController`
-> 声明为**必需 inject**（确定性优先），代价是缺这些提供者的精简 profile 上整个插件不激活；
-> web/desktop 部署恒提供，当前可接受。上面的可选形态是通用写法，不是本项目现状。
+- `host/reminders.js` 无状态派生 `service.upcomingReminders()`（任务/上课/条目三类）；
+- 页面打开时 `client.notify.js` 每 30s 轮询 `GET /api/schedule-core?view=reminders`，在
+  `at−60s` 窗口内用 Web Notification 呈现；未授权或前台时用页面内 toast；
+- 桌宠桥读同一派生集做气泡，是可选增强；
+- 不写 `ctx.schedule`、不建 Session、不触发 LLM 轮次、无“是否已提醒”持久状态。
 
-用户侧用法：启用后直接对模型说"每天 Asia/Shanghai 时区 23:00 提醒我查看天气"，或在「自动化任务」页面点「新建」（会开一个新会话，composer 里已写好该请求）。模型工具是 `schedule_create` / `schedule_list` / `schedule_delete` / `schedule_update`（Schedule 加载期间注册在活动根 Agent 的作用域中）。
-
-### 本项目怎么接
-
-- 课程/作业/考试的"提前 X 分钟"提醒：X 来自插件 `Config`；到点前用 `every_seconds`/`daily`/`cron` 排程，或在同步数据时就为每条截止时间登记 `at` 提醒。
-- 现有 Flask 侧其实**没有**后台调度（`/api/reminders/upcoming` 只是个 getter，前端 60 s 轮询 + Web Notification）。迁移后由 `ctx.schedule` 真正承担"到点提醒"，交付方式是投递回原 Session（用户在会话里被提醒），而不是系统托盘弹窗——插件的 UI 只能出现在 Web 页面里。
-- 归档含活跃提醒的会话会被拒绝（`schedule.archiveAdmission()` 给 Workspace 注册表回答归档准入）；设计交互时要把这条讲给用户。
+`ctx.schedule` 仍保留给**真正需要 Agent** 的定时任务（例如 gacha 的每周核对 `watch`）。使用它时
+必须 `ctx.get('schedule')` 判空，并按“会消耗一次 Agent 轮次”来评估。归档含活跃 schedule 的
+会话会被拒绝（`schedule.archiveAdmission()`）。
 
 ---
 
@@ -196,5 +200,5 @@ type CommandResult =
 - ❌ 用 `agent.inject()` 期待 agent 自己醒（它只进收件箱）；要唤醒用 `agent.followup()`。
 - ❌ 轮询 `agent/status` 判断是否忙；等持久事件（`turn/end`、`assistant/message`、`tool/result`），实时 token 用 `agent/assistant-stream`。
 - ❌ 把"跨重启仍然有效"寄托在 `ctx.jobs` 上。
-- ❌ 把 `ctx.schedule` 当必然存在的能力（它是可选 bundle）。
-- ❌ 自己实现一套"轮询数据库里的到期时间再弹 Web Notification"（这正是现在前端的做法，也是要淘汰的东西）。
+- ❌ 把 `ctx.schedule` 当必然存在的能力（它是可选 bundle）；日程提醒更不要用它——它会唤醒 Agent、消耗 token。
+- ❌ 在客户端直接轮询数据库里的到期时间并复制一套提前量；页面通知只轮询宿主派生集（`GET /api/schedule-core?view=reminders`），策略仍在核心 Config 一处。

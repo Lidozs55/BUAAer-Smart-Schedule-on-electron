@@ -164,7 +164,7 @@ update(key: K, fn: (current: V) => V): Promise<V>
 1. **时区只有一种语义**。统一"带偏移的 ISO 8601"，并在 schema 的字段 JSDoc/注释里写清。
 2. **key 设计决定读取成本**。`KvTable` 只有 `get` / `entries` / `keys` / `size`——没有查询语言。要"取某周条目"就必须让 key 前缀或索引记录支持它，别指望全表遍历在生产量级下没事。
 3. **schema 版本**：表结构变更时 bump `version`，需要兼容旧数据就把旧版本号写进 `compatibleVersions`。
-4. **不要重复存提醒**：提醒的持久状态属于 `ctx.schedule`，自己的 domain 里只存业务事实（截止时间），不要镜像一份"是否已提醒"。
+4. **不要持久化“是否已提醒”**：提醒是无状态派生（`upcomingReminders()` 现算，页面轮询 + 桌宠桥消费）；自己的 domain 只存业务事实（截止时间）。浏览器端去重键 `key@at` 只存 localStorage，不属于业务数据。
 5. **一次操作一个方法**：把"完成任务并更新对应条目颜色"做成**一个** domain 写序列（或用一次 `update`），不要留下写一半的状态。
 
 ---
