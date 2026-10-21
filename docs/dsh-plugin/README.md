@@ -25,9 +25,10 @@
 | `05-time-and-background.md` | `ctx.timer` / `ctx.jobs` / `ctx.schedule` / 人类命令；提醒与长任务怎么做 | 做提醒、同步、后台任务时 |
 | `06-tool-and-agent.md` | `defineTool` 与 `ToolDefinition`；描述与 schema 规范；"一个操作两个调用者"；扩展点强弱；反模式 | 要暴露能力给 Agent 时 |
 | `08-workflow-and-verification.md` | 开发循环（含 scratch web 宿主）、自检清单、安装与返回值语义、验收清单、排查表、禁忌汇总 | 每次交付前 |
-| `09-vivarium-bridge.md` | 桌宠桥 `@lidozs55/dsh-schedule-bridge`（已落地设计 v2）：职责边界、提醒气泡（任务/上课/条目）/任务状态上报、接口契约、延后项 | 动桥插件 / 提醒对外表面时 |
+| `09-vivarium-bridge.md` | 桌宠桥 `@lidozs55/dsh-schedule-bridge`（已落地设计 v2）：职责边界、提醒气泡（任务/条目）/任务状态上报、接口契约、延后项 | 动桥插件 / 提醒对外表面时 |
 | `10-ui-parity-rework.md` | UI 意图对齐返工**完成记录**：8 项根因与修复、scratch 验证结果、原版意图逐条清单 | 查交互设计意图时 |
 | `11-source-plugins.md` | 来源适配器契约：核心服务注入面、`sourceState`、路由/设置卡/tool 的拆分规则、新增来源步骤 | 接入新学校/导入格式时 |
+| `13-entry-model.md` | 统一条目模型：字段、来源快照、一次性存量转换与切换边界 | 改模型或升级存量数据时 |
 | `12-gacha-preview.md` | 二游前瞻适配器：B 站官方公告/视频、摘要优先解析、六款游戏推算规则、条目标记、Agent 写入与周检、设置卡 | 动二游来源 / 排查日期不准时 |
 
 推荐路线：

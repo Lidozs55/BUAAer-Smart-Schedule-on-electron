@@ -16,7 +16,7 @@
  * stay as defensive fallbacks, not the primary mechanism.
  */
 import Schema from '@deepseek-ai/schemastery'
-import { scheduleDomainSpec } from './host/domain.js'
+import { openScheduleDomain } from './host/migrate.js'
 import { registerClientApi } from './host/api.js'
 import { attachReminders } from './host/reminders.js'
 import { createScheduleService } from './host/service.js'
@@ -31,14 +31,13 @@ export const Config = Schema.object({
   homeworkLeadMinutes: Schema.number().default(30).description('作业类提醒提前分钟数'),
   examLeadMinutes: Schema.number().default(1440).description('考试类提醒提前分钟数（任务与考试条目同用）'),
   otherLeadMinutes: Schema.number().default(30).description('其他任务提醒提前分钟数'),
-  classLeadMinutes: Schema.number().default(10).description('上课提醒提前分钟数'),
   eventLeadMinutes: Schema.number().default(15).description('日程条目提醒提前分钟数（考试类条目改用考试提前量）'),
 })
 
 export async function apply(ctx, config) {
   // open() throws loudly on backend/facet/schema mismatch — activation
   // must fail rather than present an empty schedule.
-  const domain = await ctx.storageDomain.open(scheduleDomainSpec)
+  const domain = await openScheduleDomain(ctx.storageDomain)
   ctx.effect(() => () => { void domain.close() }, 'schedule: domain close')
 
   const service = createScheduleService(ctx, domain)

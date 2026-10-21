@@ -5,7 +5,7 @@
  * entry per weekly cell, already carrying `dayOfWeek`, `beginTime`,
  * `endTime`, `placeName` and — unlike the day-by-day `detail.do` feed — the
  * complete week information. So no term anchor is needed to DEDUCE weeks;
- * the anchor only projects those weeks onto calendar dates in the core.
+ * the adapter projects only those weeks onto explicit calendar dates.
  *
  * Only what a calendar block actually shows is kept: course name, weekday,
  * start/end time, room and weeks. Teacher names, credits, course codes,
@@ -108,13 +108,13 @@ function rulesOfItem(item) {
   const dayOfWeek = Number(item.dayOfWeek)
   const startTime = String(item.beginTime ?? '')
   const endTime = String(item.endTime ?? '')
-  if (courseName === '' || !(dayOfWeek >= 1 && dayOfWeek <= 7)) return []
+  if (courseName === '' || !Number.isInteger(dayOfWeek) || dayOfWeek < 1 || dayOfWeek > 7) return []
   if (!HHMM_RE.test(startTime) || !HHMM_RE.test(endTime)) return []
   if (endTime <= startTime) return []
-  const classroom = String(item.placeName ?? '').trim()
+  const location = String(item.placeName ?? '').trim()
   return weekRangesOf(item).map(weekRange => ({
     courseName,
-    classroom,
+    location,
     dayOfWeek,
     weekRange,
     startTime,
@@ -126,9 +126,9 @@ function rulesOfItem(item) {
  * Parse a `getMyScheduleDetail.do` payload into course rules.
  * The same slot reported by several cells becomes one rule.
  * @param {object} payload - the raw `{ datas, code, msg }` envelope.
- * @returns {object[]} rules ready for `replaceCourses`.
+ * @returns {object[]} internal upstream timetable rules.
  */
-export function parseCourses(payload) {
+function parseCourses(payload) {
   const datas = payload?.datas
   const rules = new Map()
   for (const list of [datas?.arrangedList, datas?.practiceList]) {
@@ -138,13 +138,44 @@ export function parseCourses(payload) {
         const key = ruleKey(rule)
         const prior = rules.get(key)
         // Same slot in two lists: keep the one that knows its room.
-        if (prior === undefined || (prior.classroom === '' && rule.classroom !== '')) {
+        if (prior === undefined || (prior.location === '' && rule.location !== '')) {
           rules.set(key, rule)
         }
       }
     }
   }
   return [...rules.values()]
+}
+
+/** Project only the school's explicit weeks onto China-local calendar dates. */
+export function parseTimetable(payload, termStart) {
+  const anchor = new Date(`${termStart}T00:00:00Z`)
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(termStart)
+    || !Number.isFinite(anchor.getTime())
+    || anchor.toISOString().slice(0, 10) !== termStart || anchor.getUTCDay() !== 1) {
+    throw new Error('学期起始日期必须是有效的第一周周一（YYYY-MM-DD）')
+  }
+  const entries = new Map()
+  const weeksCovered = new Set()
+  for (const rule of parseCourses(payload)) {
+    for (const part of rule.weekRange.split(',')) {
+      const [from, to = from] = part.split('-').map(Number)
+      for (let week = from; week <= to; week += 1) {
+        weeksCovered.add(week)
+        const date = new Date(anchor.getTime() + ((week - 1) * 7 + rule.dayOfWeek - 1) * 86_400_000)
+          .toISOString().slice(0, 10)
+        const sourceKey = `teaching:${rule.courseName}:${date}:${rule.startTime}`
+        const entry = {
+          sourceKey, title: rule.courseName, description: null, location: rule.location || null,
+          start: `${date}T${rule.startTime}:00+08:00`, end: `${date}T${rule.endTime}:00+08:00`,
+          category: 'study', lock: true, allDay: false,
+        }
+        const prior = entries.get(sourceKey)
+        if (prior === undefined || (!prior.location && entry.location)) entries.set(sourceKey, entry)
+      }
+    }
+  }
+  return { entries: [...entries.values()], weeksCovered: [...weeksCovered].sort((a, b) => a - b) }
 }
 
 /** Student number the endpoint echoes back, when the payload carries one. */
@@ -154,7 +185,7 @@ export function studentIdOf(payload) {
 }
 
 /**
- * Parse `exams.do` into exam task drafts.
+ * Parse `exams.do` into exam task drafts and explicitly timed calendar entries.
  *
  * The endpoint is a whole-term list too, and one course can sit TWO exams in
  * a term (a mid-term and a final: `工科数学分析（1）` shows up in week 10 and
@@ -166,11 +197,11 @@ export function studentIdOf(payload) {
  * display string are dropped.
  *
  * @param {unknown} datas - the endpoint's `datas` array.
- * @returns {{key: string, title: string, description: string|null,
- *   taskType: string, due: string, priority: string}[]}
+ * @returns {{tasks: object[], entries: object[]}}
  */
 export function parseExams(datas) {
-  const exams = []
+  const tasks = new Map()
+  const entries = new Map()
   for (const item of Array.isArray(datas) ? datas : []) {
     if (item === null || typeof item !== 'object') continue
     const courseName = String(item.courseName ?? '').trim()
@@ -178,19 +209,22 @@ export function parseExams(datas) {
     const start = String(item.startTime ?? '').trim()
     if (courseName === '' || day === null || !HHMM_RE.test(start)) continue
     const end = String(item.endTime ?? '').trim()
-    const [y, m, d] = day.split('-').map(Number)
-    const [hh, mm] = start.split(':').map(Number)
-    exams.push({
-      // Name + date: survives a time change, and keeps a two-exam course apart.
-      key: `${examKey(courseName)}\u0000${day}`,
-      title: `${courseName} 考试`,
-      description: examNotes(item, HHMM_RE.test(end) ? end : ''),
-      taskType: 'exam',
-      due: zonedIso(y, m, d, hh, mm),
-      priority: 'high',
-    })
+    const key = `${examKey(courseName)}\u0000${day}`
+    const title = `${courseName} 考试`
+    const due = `${day}T${start}:00+08:00`
+    const description = examNotes(item, HHMM_RE.test(end) ? end : '')
+    tasks.set(key, { key, title, description, taskType: 'exam', due, priority: 'high' })
+    // A missing or invalid end still yields a deadline, never a fabricated block.
+    if (HHMM_RE.test(end) && end > start) {
+      entries.set(key, {
+        sourceKey: `exam:${key}`, title, description,
+        location: String(item.examPlace ?? '').trim() || null,
+        start: due, end: `${day}T${end}:00+08:00`,
+        category: 'exam', lock: true, allDay: false,
+      })
+    }
   }
-  return exams
+  return { tasks: [...tasks.values()], entries: [...entries.values()] }
 }
 
 /**
@@ -223,16 +257,4 @@ function examNotes(item, end) {
     seat === '' ? '' : `座位：${seat}`,
     end === '' ? '' : `结束：${end}`,
   ].filter(Boolean).join('；') || null
-}
-
-const pad2 = n => String(n).padStart(2, '0')
-
-/** ISO 8601 with explicit local offset for a local wall-clock datetime. */
-function zonedIso(y, m, d, hh, mm) {
-  const date = new Date(y, m - 1, d, hh, mm, 0, 0)
-  const off = -date.getTimezoneOffset()
-  const sign = off >= 0 ? '+' : '-'
-  const abs = Math.abs(off)
-  return `${y}-${pad2(m)}-${pad2(d)}T${pad2(hh)}:${pad2(mm)}:00`
-    + `${sign}${pad2(Math.floor(abs / 60))}:${pad2(abs % 60)}`
 }

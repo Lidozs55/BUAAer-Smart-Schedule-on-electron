@@ -33,9 +33,6 @@ function operations(service) {
     deleteEntry: body => service.deleteEntry(body.ids),
     batchCreateEntries: body =>
       service.batchCreateEntries(body.inputs, { allowConflicts: body.allowConflicts }),
-    saveCourseOccurrence: body => service.saveCourseOccurrence(body.input),
-    resetCourseOccurrence: body =>
-      service.resetCourseOccurrence(body.courseId, body.baseDay),
     createTask: body => service.createTask(body.input),
     updateTask: body => service.updateTask(body.id, body.patch),
     setTaskCompleted: body => service.setTaskCompleted(body.id, body.completed),
@@ -45,8 +42,6 @@ function operations(service) {
     /** Full-domain dump — the importable counterpart of the settings export. */
     export: () => ({
       global: service.getMeta(),
-      courses: service.listCourses(),
-      courseOverrides: service.listCourseOverrides(),
       entries: service.listEntries(),
       tasks: service.listTasks(),
     }),

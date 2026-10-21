@@ -163,7 +163,9 @@ export const entryMarker = game => `[gacha:${game}]`
 export const kindMarker = kind => `[kind:${kind}]`
 
 export const ownsEntry = (entry, game) =>
-  typeof entry?.description === 'string' && entry.description.includes(entryMarker(game))
+  (entry?.source === 'gacha' && typeof entry.sourceKey === 'string' && entry.sourceKey.startsWith(game + ':'))
+  || (typeof entry?.description === 'string' && entry.description.includes(entryMarker(game)))
 
 export const ownsKind = (entry, game, kind) =>
-  ownsEntry(entry, game) && entry.description.includes(kindMarker(kind))
+  ownsEntry(entry, game) && (entry.sourceKey === game + ':' + kind
+    || (typeof entry.description === 'string' && entry.description.includes(kindMarker(kind))))

@@ -3,7 +3,7 @@
  *
  * Hard dependency: `scheduleCore` (the generic schedule core). This bundle
  * owns the BUAA-specific parts (student id, SSO login, JW endpoints, parsing)
- * and writes courses and exam tasks through the core service. Removing it
+ * and writes dated teaching/exam entries and exam tasks through the core service. Removing it
  * leaves the core and its data untouched.
  *
  * One sync = one whole term: the JW timetable endpoint returns every cell of
@@ -31,7 +31,7 @@ export async function apply(ctx) {
       text: () => [
         '北航教务导入插件已启用：用 buaa_course_sync 一次导入整学期课表与考试。',
         '它需要密码（仅当次使用、不保存）和学期起始日期（第一周周一，已保存在日程设置里则不必重复给）。',
-        '导入是整学期快照：课表自带的周次即最终周次，重复导入会替换此前的课程，未排课的空缺不会被外推。',
+        '导入是整学期快照：课表自带的周次即最终周次，重复导入会替换此前的教学与考试日程，未排课的空缺不会被外推。',
       ].join('\n'),
     }), 'buaa-schedule: prompt section')
   }

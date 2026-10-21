@@ -1,22 +1,6 @@
-/**
- * One BUAA sync run: SSO login, then two whole-term requests (timetable and
- * exams), then one snapshot write into the schedule core.
- *
- * The timetable request returns the COMPLETE term — every cell carries its
- * own weekday, times and weeks — so a sync is a full statement of fact, not
- * a sample: `replaceCourses` makes the fetched rules the whole table, which
- * also means a course dropped from the JW system disappears here, and no
- * week range ever needs extrapolating. The only input the school side cannot
- * supply is which semester the weeks belong to, so the user's term anchor
- * (`termStart`, the Monday of week 1, owned by the core settings) is what
- * turns week numbers into dates.
- *
- * The adapter owns only source-specific state (student id, term code) in
- * `scheduleCore.getSourceState('buaa')`; every schedule write goes through
- * the core service.
- */
+/** Import the whole BUAA term as one source-owned snapshot of ordinary entries. */
 import { BuaaError, fetchExams, fetchSchedule, ssoLogin } from './jw.js'
-import { examKey, parseCourses, parseExams, studentIdOf } from './parse.js'
+import { examKey, parseTimetable, parseExams, studentIdOf } from './parse.js'
 import { termCodeFor, termLabel } from './time.js'
 import { SOURCE_ID } from './state.js'
 
@@ -28,7 +12,7 @@ import { SOURCE_ID } from './state.js'
  *   the settings page first; it is written to the core meta.
  * @returns {object} summary for the tool and the settings card.
  */
-export async function runSync({ service }, creds) {
+export async function runSync({ service, jw = { ssoLogin, fetchSchedule, fetchExams } }, creds) {
   const password = typeof creds.password === 'string' ? creds.password : ''
   if (password === '') {
     throw new BuaaError('invalid_input', '缺少统一认证密码（仅当次使用，不保存）')
@@ -46,47 +30,44 @@ export async function runSync({ service }, creds) {
   const buaaId = creds.buaaId || service.getSourceState(SOURCE_ID).buaaId
   if (!buaaId) throw new BuaaError('invalid_input', '缺少学号（先在设置或工具参数里提供）')
 
-  const jar = await ssoLogin(buaaId, password)
+  const jar = await jw.ssoLogin(buaaId, password)
 
-  const schedule = await fetchSchedule(jar, termCode)
-  const rules = parseCourses(schedule)
-  if (rules.length === 0) {
+  const schedule = await jw.fetchSchedule(jar, termCode)
+  const timetable = parseTimetable(schedule, termStart)
+  if (!Array.isArray(schedule?.datas?.arrangedList) && !Array.isArray(schedule?.datas?.practiceList)) {
     throw new BuaaError('data',
-      `教务返回了 ${termLabel(termCode)} 的课表，但没有任何可解析的课程`
+      `教务返回了 ${termLabel(termCode)} 的课表，但缺少教学安排列表`
       + '（学期起始日期是否填成了别的学期？）')
   }
 
-  const courses = await service.replaceCourses(rules, { source: SOURCE_ID, termCode })
-  const exams = await syncExams({ service }, jar, termCode, termStart)
+  let examDrafts
+  let examFailure
+  try {
+    const response = await jw.fetchExams(jar, termCode)
+    if (!Array.isArray(response?.datas)) throw new BuaaError('data', '考试安排缺少有效列表')
+    examDrafts = parseExams(response.datas)
+  } catch (error) {
+    if (error.code === 'auth') throw error
+    examFailure = error.message
+  }
+  const examEntries = examDrafts?.entries ?? service.listEntries()
+    .filter(entry => entry.source === SOURCE_ID && entry.category === 'exam')
+    .map(({ title, description, location, start, end, category, lock, allDay, sourceKey }) =>
+      ({ title, description, location, start, end, category, lock, allDay, sourceKey }))
+  const entries = await service.replaceSourceEntries(SOURCE_ID, [...timetable.entries, ...examEntries])
+  const exams = examDrafts === undefined
+    ? { created: 0, updated: 0, removed: 0, total: examEntries.length, failed: examFailure }
+    : await syncExamTasks({ service }, examDrafts.tasks, termStart)
 
-  // `replaceCourses` already recorded `termCode`; only the account is ours
-  // to add, so both values are not written twice.
   const state = service.getSourceState(SOURCE_ID)
   const account = studentIdOf(schedule) || buaaId
-  if (account !== state.buaaId) {
-    await service.setSourceState(SOURCE_ID, { ...state, buaaId: account })
-  }
+  await service.setSourceState(SOURCE_ID, { ...state, buaaId: account, termCode })
 
   return {
-    termCode,
-    termLabel: termLabel(termCode),
-    termStart,
-    weeksCovered: weeksOf(rules),
-    courses,
-    exams,
+    termCode, termLabel: termLabel(termCode), termStart,
+    weeksCovered: timetable.weeksCovered,
+    entries, teaching: timetable.entries.length, exams,
   }
-}
-
-/** Every teaching week the fetched rules touch, ascending. */
-function weeksOf(rules) {
-  const weeks = new Set()
-  for (const rule of rules) {
-    for (const part of String(rule.weekRange).split(',')) {
-      const [from, to] = part.split('-').map(Number)
-      for (let w = from; w <= (to ?? from); w += 1) weeks.add(w)
-    }
-  }
-  return [...weeks].sort((a, b) => a - b)
 }
 
 /**
@@ -104,16 +85,7 @@ function weeksOf(rules) {
  * cancelled or moved exam disappears, but a previous term's exam history is
  * never touched.
  */
-async function syncExams({ service }, jar, termCode, termStart) {
-  let drafts
-  try {
-    drafts = parseExams((await fetchExams(jar, termCode)).datas)
-  } catch (error) {
-    // Exams are a bonus: a broken exam feed must not sink a good timetable.
-    if (error.code === 'auth') throw error
-    return { created: 0, updated: 0, removed: 0, total: 0, failed: error.message }
-  }
-
+async function syncExamTasks({ service }, drafts, termStart) {
   const dayOf = task => String(task.due ?? '').slice(0, 10)
   const taskKey = task => `${examKey(task.title)}\u0000${dayOf(task)}`
   const existingByKey = new Map(service.listTasks({ scope: 'all' })

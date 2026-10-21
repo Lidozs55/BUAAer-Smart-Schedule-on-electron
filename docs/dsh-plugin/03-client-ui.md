@@ -51,7 +51,7 @@ window.__ModuleLoader__.load({
     const h = React.createElement;
 
     function CalendarIcon({ size }) { return h('span', { style: { fontSize: size } }, '▦'); }
-    function CalendarPage() { return h('div', null, '课程表'); }
+    function CalendarPage() { return h('div', null, '日程'); }
 
     return {
       inject: ['slots', 'locale'],
@@ -281,8 +281,8 @@ Host 侧 `ctx.commands.register({ name, description, input, handler })`（见 `0
 export const inject = ['slots', 'locale']
 
 ctx.effect(() => ctx.locale.register('scheduleCore', {
-  zh: { title: '智能日历', sync: '同步课表' },
-  en: { title: 'Smart Calendar', sync: 'Sync courses' },
+  zh: { title: '智能日历', sync: '导入日程' },
+  en: { title: 'Smart Calendar', sync: 'Import entries' },
 }), 'schedule: dictionaries')
 
 // 注册时声明 locale，组件 props 就会多出 t

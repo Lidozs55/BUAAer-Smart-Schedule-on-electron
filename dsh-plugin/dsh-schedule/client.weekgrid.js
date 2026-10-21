@@ -12,12 +12,8 @@
  *     block (a plain right click makes a 1-hour ghost) and always clears
  *     any ghost already on the field; right click on an entry or the
  *     ghost opens its editor; the native menu is suppressed;
- *   - course occurrences (neither an entry nor the ghost) never read as
- *     empty-grid space (no ghost, no marquee — R11-1). Their quick-edit
- *     gestures are deliberately disabled: left drag does not move them and
- *     the resize handle is not rendered. Right click / double click opens
- *     the per-occurrence editor, which writes a manual exception instead
- *     of touching the synced weekly rule;
+ *   - locked entries participate in selection, editing, and deletion, but
+ *     left-button quick move/resize gestures leave their times unchanged;
  *   - left press-drag on empty grid rubber-band SELECTS the entry blocks
  *     it touches; a plain left click on empty clears the selection;
  *   - any gesture unrelated to the ghost destroys it; a single left click
@@ -55,20 +51,16 @@ window.__ModuleLoader__.load({
     const snapDelta = dy => Math.round(dy / PX_PER_MIN / SNAP_MIN) * SNAP_MIN
 
     function EventBlock({ block, isSelected, onResizeStart }) {
-      const isCourse = block.kind === 'course'
       const share = block.laneCount > 1 ? 100 / block.laneCount : 100
       return h('div', {
         className: [
           'bsch-block',
-          isCourse ? 'is-course' : '',
           block.done ? 'is-done' : '',
           isSelected ? 'is-selected' : '',
           block.dragging ? 'is-dragging' : '',
-          block.canceled ? 'is-canceled' : '',
         ].filter(Boolean).join(' '),
-        'data-kind': block.kind,
-        ...(block.kind === 'entry' ? { 'data-entry-id': block.id } : {}),
-        ...(block.kind === 'course' ? { 'data-course-key': block.courseKey } : {}),
+        'data-kind': 'entry',
+        'data-entry-id': block.id,
         style: {
           top: `${block.top}px`,
           height: `${Math.max(14, block.height - 2)}px`,
@@ -80,14 +72,15 @@ window.__ModuleLoader__.load({
             : {}),
           ...(block.resizeTo !== null ? { height: `${Math.max(14, block.resizeTo - 2)}px` } : {}),
         },
-        title: `${block.title} ${block.timeLabel}`,
+        title: `${block.title} ${block.timeLabel}${block.subtitle ? ` · ${block.subtitle}` : ''}`,
       },
       h('div', { className: 'bsch-block-title' }, block.title),
       block.height >= 32 ? h('div', { className: 'bsch-block-sub' }, block.timeLabel) : null,
       block.height >= 48 && block.subtitle ? h('div', { className: 'bsch-block-sub' }, block.subtitle) : null,
-      isCourse ? null : h('div', {
+      block.raw.lock === true ? null : h('div', {
         className: 'bsch-block-resize',
         onPointerDown: event => {
+          if (event.button !== 0) return
           event.stopPropagation()
           onResizeStart(block, event)
         },
@@ -106,15 +99,13 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @param {object} props - `{ t, timer, weekStart, occurrences, entries,
-     *   completedTaskIds, onEditEntry, onEditCourse, onCreateAt, onMoveItems,
+     * @param {object} props - `{ t, timer, weekStart, entries,
+     *   completedTaskIds, onEditEntry, onCreateAt, onMoveItems,
      *   onDeleteEntries, onJumpTo }` — move/delete take one item or many
-     *   through the same single props (the host API is natively multi-item);
-     *   course occurrences open a per-occurrence editor via `onEditCourse`
-     *   (drag/resize stay disabled so a week's class is not moved by accident).
+     *   through the same single props (the host API is natively multi-item).
      */
     function WeekGrid(props) {
-      const { t, timer, weekStart, occurrences, entries, completedTaskIds } = props
+      const { t, timer, weekStart, entries, completedTaskIds } = props
       // `pendingMove` is the optimistic time override shown from the moment
       // the pointer is released until the refreshed snapshot arrives. Without
       // it the block snapped back to its old slot for one or two frames
@@ -182,12 +173,6 @@ window.__ModuleLoader__.load({
           return changed ? next : prev
         })
       }, [entriesById, pendingMove])
-      // An overridden occurrence has a stable override id; a plain projected
-      // one is identified by courseId+start (same key the block carries).
-      const occurrencesByKey = useMemo(() =>
-        new Map(occurrences.map(item => [
-          item.overrideId ?? `${item.courseId}@${item.start}`, item,
-        ])), [occurrences])
       // Escape clears drafts; Delete removes the selection (Windows).
       useEffect(() => {
         const onKey = event => {
@@ -233,14 +218,13 @@ window.__ModuleLoader__.load({
         const byDay = new Map(days.map(day => [day, []]))
         // Bucket by the pending (post-drop) time when there is one, so a
         // cross-column drag lands in the target column immediately.
-        const add = (item, kind, view = item) => {
+        for (const entry of entries) {
+          const view = pendingMove.get(entry.id) ?? entry
           const key = gridDay(view.start)
-          if (byDay.has(key)) byDay.get(key).push({ item, kind })
+          if (byDay.has(key)) byDay.get(key).push(entry)
         }
-        for (const occurrence of occurrences) add(occurrence, 'course')
-        for (const entry of entries) add(entry, 'entry', pendingMove.get(entry.id) ?? entry)
         return byDay
-      }, [days, occurrences, entries, pendingMove])
+      }, [days, entries, pendingMove])
 
       // Column geometry is frozen at grab time; pointer x picks the target day.
       const cellRects = () =>
@@ -279,7 +263,12 @@ window.__ModuleLoader__.load({
 
       // -- gesture: move entries (left press on an entry block) -----------------
       const startEntryDrag = (id, event, dayIndex) => {
-        const ids = selected.has(id) ? [...selected] : [id]
+        if (entriesById.get(id)?.lock === true) {
+          setSelected(new Set([id]))
+          return
+        }
+        const ids = (selected.has(id) ? [...selected] : [id])
+          .filter(entryId => entriesById.get(entryId)?.lock !== true)
         const origin = { y: event.clientY, day: dayIndex }
         const cells = cellRects()
         const dayAt = clientX => {
@@ -358,7 +347,7 @@ window.__ModuleLoader__.load({
       }
 
       const startResize = (block, event) => {
-        if (drag !== null || resize !== null) return
+        if (event.button !== 0 || block.raw.lock === true || drag !== null || resize !== null) return
         event.preventDefault()
         const origin = { y: event.clientY, endMin: relMinutes(block.end), startMin: relMinutes(block.start), end: block.end }
         const onMove = moveEvent => {
@@ -479,7 +468,7 @@ window.__ModuleLoader__.load({
 
       const onGridPointerDown = event => {
         if (event.button !== 0 && event.button !== 2) return
-        if (event.target.closest?.('.bsch-block-resize')) return
+        if (event.button === 0 && event.target.closest?.('.bsch-block-resize')) return
         event.preventDefault()
         const blockEl = event.target.closest?.('.bsch-block')
         const isGhost = blockEl !== null && blockEl.classList.contains('is-ghost')
@@ -494,12 +483,6 @@ window.__ModuleLoader__.load({
           } else if (isEntry) {
             setGhost(null) // a right gesture on an entry is unrelated to the draft
             rightPress.current = { type: 'entry', id: blockEl.dataset.entryId }
-          } else if (blockEl !== null) {
-            // Course occurrence: opens the per-occurrence editor; never
-            // falls through to "empty" (which would create a ghost).
-            setGhost(null)
-            const occurrence = occurrencesByKey.get(blockEl.dataset.courseKey ?? '')
-            if (occurrence !== undefined) props.onEditCourse(occurrence)
           } else if (dayIndex !== -1) {
             // A right gesture always clears the field first; the band (or
             // the plain-click ghost) then starts from this very point.
@@ -521,11 +504,6 @@ window.__ModuleLoader__.load({
         } else if (isEntry) {
           setGhost(null) // a left gesture on an entry is unrelated to the draft
           startEntryDrag(blockEl.dataset.entryId, event, dayIndex)
-        } else if (blockEl !== null) {
-          // Course occurrence: quick edits (drag position / drag duration)
-          // are intentionally disabled; click is inert, the editor opens
-          // via double click or right click.
-          setGhost(null)
         } else if (dayIndex !== -1) {
           // Left press on empty: clear everything, arm the marquee.
           setGhost(null)
@@ -552,10 +530,6 @@ window.__ModuleLoader__.load({
           setGhost(null)
           const raw = entriesById.get(blockEl.dataset.entryId)
           if (raw !== undefined) props.onEditEntry({ raw })
-        } else if (blockEl.dataset.courseKey !== undefined) {
-          setGhost(null)
-          const occurrence = occurrencesByKey.get(blockEl.dataset.courseKey)
-          if (occurrence !== undefined) props.onEditCourse(occurrence)
         }
       }
 
@@ -569,13 +543,13 @@ window.__ModuleLoader__.load({
         // Effective times include the optimistic post-drop preview so lane
         // layout and block positions never fall back to the old slot.
         const times = item => pendingMove.get(item.id) ?? item
-        const laid = laneLayout(bucket.map(({ item, kind }) => ({
-          id: `${kind}:${item.id}`,
+        const laid = laneLayout(bucket.map(item => ({
+          id: item.id,
           startMin: relMinutes(times(item).start),
           endMin: relMinutes(times(item).end),
         })))
-        return bucket.map(({ item, kind }) => {
-          const id = `${kind}:${item.id}`
+        return bucket.map(item => {
+          const id = item.id
           const layout = laid.get(id)
           const view = times(item)
           // Clip into the display day; overnight tails past 04:00 fold away.
@@ -585,26 +559,20 @@ window.__ModuleLoader__.load({
           const height = (endMin - startMin) * PX_PER_MIN
           const isDragging = drag !== null && drag.ids.includes(item.id)
           const isResizing = resize !== null && resize.id === item.id
-          const title = item.title ?? item.courseName
           const block = {
             id: item.id,
-            kind,
-            category: kind === 'course' ? 'course' : item.category,
-            ...(kind === 'course'
-              ? { courseKey: item.overrideId ?? `${item.courseId}@${item.start}` }
-              : {}),
-            title: item.canceled ? `${title}（${t('course.canceled')}）` : title,
-            subtitle: item.classroom || undefined,
+            category: item.category,
+            title: item.title,
+            subtitle: item.location || undefined,
             start: view.start,
             end: view.end,
             raw: item,
-            canceled: kind === 'course' && item.canceled === true,
             top: (startMin - DAY_START_MIN) * PX_PER_MIN,
             height,
             lane: layout.lane,
             laneCount: layout.laneCount,
             timeLabel: `${view.start.slice(11, 16)}–${view.end.slice(11, 16)}`,
-            done: kind === 'entry' && entryTaskDone.get(item.id) === true,
+            done: entryTaskDone.get(item.id) === true,
             dragging: isDragging || isResizing,
             translate: isDragging ? { x: drag.dx, y: drag.deltaMin * PX_PER_MIN } : null,
             resizeTo: isResizing ? (resize.endMin - startMin) * PX_PER_MIN : null,
@@ -612,7 +580,7 @@ window.__ModuleLoader__.load({
           return h('div', { key: id },
             h(EventBlock, {
               block,
-              isSelected: kind === 'entry' && selected.has(item.id),
+              isSelected: selected.has(item.id),
               onResizeStart: startResize,
             }))
         })

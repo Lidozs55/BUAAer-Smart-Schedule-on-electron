@@ -1,45 +1,32 @@
 /**
  * Full-domain import for the shape this plugin's own export produces
  * (`settings.section` → export JSON). Round-tripping an export must work.
- *
- * Source-specific legacy dumps (the old Electron SQLite export) belong to
- * their source adapter, not here — see docs/dsh-plugin/11-source-plugins.md.
  */
-
-const PRIORITIES = ['high', 'medium', 'low']
+import { PRIORITIES } from './model.js'
 
 const priorityOf = value => (PRIORITIES.includes(value) ? value : 'medium')
 
-const hhmm = value => (typeof value === 'string' ? value.slice(0, 5) : '00:00')
-
-const ruleKey = row => [
-  row.courseName, row.dayOfWeek, row.startTime, row.weekRange,
-].join('\u0000')
-
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
-
-const courseOf = row => ({
-  courseName: typeof row.courseName === 'string' ? row.courseName : '',
-  teacher: typeof row.teacher === 'string' ? row.teacher : '未知',
-  classroom: typeof row.classroom === 'string' ? row.classroom : '',
-  dayOfWeek: Number(row.dayOfWeek),
-  weekRange: typeof row.weekRange === 'string' && row.weekRange !== '' ? row.weekRange : '1-16',
-  startTime: hhmm(row.startTime),
-  endTime: hhmm(row.endTime),
-})
 
 /**
  * @param {object} service - the schedule service.
- * @param {object} payload - `{ global?, courses?, courseOverrides?, entries?, tasks? }`.
+ * @param {object} payload - `{ global?, entries?, tasks? }`.
  * @returns {object} per-table reconciliation counts.
  */
 export async function importSchedulePayload(service, payload) {
   if (!isObject(payload)) {
     throw Object.assign(new Error('导入载荷不是对象'), { code: 'invalid_input' })
   }
+  const unsupported = Object.keys(payload).filter(key => !['global', 'entries', 'tasks'].includes(key))
+  if (unsupported.length > 0) {
+    throw Object.assign(new Error(`不支持的导入字段：${unsupported.join('、')}；请使用当前条目格式`), { code: 'invalid_input' })
+  }
+  for (const table of ['entries', 'tasks']) {
+    if (payload[table] !== undefined && !Array.isArray(payload[table])) {
+      throw Object.assign(new Error(`${table} 必须是数组`), { code: 'invalid_input' })
+    }
+  }
   const counts = {
-    courses: { total: 0, created: 0, updated: 0 },
-    courseOverrides: { total: 0, imported: 0 },
     entries: { total: 0, created: 0, skipped: 0 },
     tasks: { total: 0, created: 0, skipped: 0 },
   }
@@ -48,37 +35,6 @@ export async function importSchedulePayload(service, payload) {
   if (typeof termStart === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(termStart)
       && service.getMeta().termStart === '') {
     await service.setMeta({ termStart })
-  }
-
-  const courseRows = Array.isArray(payload.courses) ? payload.courses : []
-  counts.courses.total = courseRows.length
-  if (courseRows.length > 0) {
-    const summary = await service.upsertCourses(courseRows.map(courseOf))
-    counts.courses.created = summary.created
-    counts.courses.updated = summary.updated
-  }
-
-  // Exceptions are keyed by the OLD course id in an export; importer-created
-  // rules get fresh ids, so re-key by rule identity before writing them back.
-  const overrides = Array.isArray(payload.courseOverrides) ? payload.courseOverrides : []
-  counts.courseOverrides.total = overrides.length
-  if (overrides.length > 0) {
-    const currentByKey = new Map(service.listCourses().map(row => [ruleKey(row), row.id]))
-    const newIdOf = new Map()
-    for (const row of courseRows) {
-      if (row?.id === undefined) continue
-      newIdOf.set(String(row.id), currentByKey.get(ruleKey(courseOf(row))))
-    }
-    for (const override of overrides) {
-      const courseId = newIdOf.get(String(override.courseId))
-      if (courseId === undefined) continue
-      try {
-        await service.saveCourseOccurrence({ ...override, courseId })
-        counts.courseOverrides.imported += 1
-      } catch {
-        // A stale exception must not abort the whole import.
-      }
-    }
   }
 
   const entryIdMap = new Map()
@@ -96,6 +52,10 @@ export async function importSchedulePayload(service, payload) {
     const created = await service.createEntry({
       title: entry.title,
       description: entry.description ?? null,
+      location: entry.location ?? null,
+      lock: entry.lock ?? false,
+      source: entry.source,
+      sourceKey: entry.sourceKey,
       category: entry.category ?? 'other',
       start,
       end: entry.end,

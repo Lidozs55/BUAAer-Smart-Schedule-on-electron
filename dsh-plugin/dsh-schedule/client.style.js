@@ -55,9 +55,7 @@ window.__ModuleLoader__.load({
    past the day column's right and bottom lines. */
 .bsch-block { position: absolute; left: 1px; right: auto; box-sizing: border-box; border-radius: var(--dsw-radius-xs); border-left: 2px solid var(--bsch-block-color, var(--dsw-alias-state-idle-primary)); background: color-mix(in srgb, var(--bsch-block-color, var(--dsw-alias-state-idle-primary)) 16%, transparent); padding: 2px 4px; font-size: 11px; line-height: 1.4; overflow: hidden; cursor: pointer; touch-action: none; }
 .bsch-block:hover { background: color-mix(in srgb, var(--bsch-block-color, var(--dsw-alias-state-idle-primary)) 26%, transparent); }
-.bsch-block.is-course { border-left-style: dashed; }
 .bsch-block.is-done { color: var(--dsw-alias-label-secondary); text-decoration: line-through; opacity: 0.65; }
-.bsch-block.is-canceled { opacity: 0.45; text-decoration: line-through; border-left-style: dotted; }
 .bsch-block.is-dragging { opacity: 0.5; z-index: 4; }
 .bsch-block.is-selected { outline: 1.5px solid var(--dsw-alias-brand-primary); outline-offset: -1px; }
 /* Drafts span their whole column — an absolute block without a width

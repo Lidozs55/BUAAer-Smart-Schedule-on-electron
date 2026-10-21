@@ -3,8 +3,8 @@
  *
  * The generic schedule core owns the calendar, entries, conflict detection
  * and settings page. This adapter owns only the six official Bilibili
- * accounts, the announcement parsing rules and the two entries per game
- * (`版本前瞻直播` / `版本更新`). Removing it leaves every existing entry in
+ * accounts, the announcement parsing rules and one preview entry per game.
+ * Version updates remain source information. Removing it leaves every existing entry in
  * place; only future refreshes stop.
  */
 import { registerGachaApi } from './host/api.js'
@@ -19,6 +19,7 @@ export async function apply(ctx) {
   ctx.effect(() => registerGachaTools(ctx, service), 'gacha-schedule: tools')
   ctx.effect(() => registerGachaApi(ctx, service), 'gacha-schedule: api')
   ctx.effect(() => () => service.dispose(), 'gacha-schedule: dispose')
+  await service.reconcileCachedEntries()
 
   // Background refresh is the primary path: no Agent turn is required, and a
   // profile without the optional schedule bundle still gets correct dates.
@@ -42,10 +43,10 @@ export async function apply(ctx) {
       order: 1002,
       text: () => [
         '二游前瞻插件已启用：后台每 6 小时从六款游戏的 B 站官方账号刷新版本更新与前瞻直播时间，',
-        '每款游戏维护「版本前瞻直播」和「版本更新」两条日程。',
+        '仅「版本前瞻直播」同步至日程；「版本更新」只保存为来源信息，不占用日历时间。',
         '用 gacha_schedule 查询（action=list）或立即刷新（action=refresh）；',
         '官方明确给出时间时用 action=apply_official 按游戏写入（带时区 ISO 8601，UTC+8），',
-        '不要用 sched_entry 改这些条目，也不要把其他日程改成二游内容。',
+        '推算前瞻时间可编辑；官方明确日期与时间的前瞻仅锁定左键拖动，其他编辑照常。不要把其他日程改成二游内容。',
         '需要每周由 Agent 核对一次（终末地节奏不固定）时，用 action=watch 登记；',
         '该能力依赖「自动化任务」bundle，缺失时只保留 6 小时后台刷新。',
       ].join('\n'),

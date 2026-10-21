@@ -135,7 +135,8 @@ plugin_manager { action: "install_bundle", target: "<bundle 目录绝对路径>"
 | 页面某块空白，控制台有 `slot entry crashed` | 组件抛错（常见：`require` 了 DSH Client 包、读了不存在的 props、访问了别的插件的 DOM） |
 | 样式不跟随主题 | 用了字面颜色或自造变量，而不是 `--dsw-*` token |
 | 工具在 schema 里看不到 | `ctx.tools.restrict()` 把它裁掉了；或注册发生在错误 scope；或插件没激活 |
-| 定时提醒不触发 | 用的是 `agent.inject()`（不唤醒）而不是 `agent.followup()`；或定时器随插件卸载被清掉了；或 `schedule` 能力未启用（可选 bundle） |
+| 日程提醒不触发 | 检查核心提醒开关、提前量与派生集、页面轮询/通知权限、可选桌宠桥是否激活；普通通知不依赖 `schedule` |
+| 定时 Agent 核对不触发 | 检查 `agent.followup()`、定时器生命周期与可选 `schedule` 能力；不要把它与普通通知混淆 |
 | 明暗切换后局部错乱 | 用了 iframe 承载页面（拿不到宿主主题） |
 
 ---

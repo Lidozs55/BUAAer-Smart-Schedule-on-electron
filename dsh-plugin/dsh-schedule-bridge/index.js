@@ -8,10 +8,9 @@
  * SURFACES on top of two read faces:
  *
  *   1. Reminder notices — when a reminder moment arrives (task deadline,
- *      upcoming class, calendar entry — the core's derived set covers all
- *      three via the `kind` field), raise a sticky pet bubble (notice).
+ *      calendar entry — the core's derived set covers both via the `kind` field), raise a sticky pet bubble (notice).
  *      Tasks get 「知道了」+「已完成」(tapping 已完成 completes the task
- *      straight from the bubble); classes/entries get 「知道了」 only —
+ *      straight from the bubble); entries get 「知道了」 only —
  *      there is nothing to complete. Reads `scheduleCore.upcomingReminders()`
  *      so lead times live in exactly one place. Because that derived set
  *      only contains FUTURE moments, the poll fires within the ≤60s window
@@ -32,7 +31,7 @@ import Schema from '@deepseek-ai/schemastery'
 export const inject = ['scheduleCore', 'vivarium']
 
 export const Config = Schema.object({
-  noticeOnReminder: Schema.boolean().default(true).description('提醒时刻到达时弹桌宠气泡（任务截止/上课/日程条目）'),
+  noticeOnReminder: Schema.boolean().default(true).description('提醒时刻到达时弹桌宠气泡（任务截止/日程条目）'),
   statusSignals: Schema.boolean().default(true).description('向基座上报任务状态事实（待办/过期/下一截止），宠物语义由基座推导'),
 })
 
@@ -42,7 +41,7 @@ const NOTICE_TTL_MS = 30 * 60_000
 const REPORT_INTERVAL_MS = 5 * 60_000
 
 const TYPE_LABELS = { homework: '作业', exam: '考试', lecture: '听课', other: '截止事项' }
-const ENTRY_LABELS = { course: '课程', homework: '作业', exam: '考试', meeting: '会议', study: '自习', sports: '运动', other: '日程' }
+const ENTRY_LABELS = { homework: '作业', exam: '考试', meeting: '会议', study: '学习', sports: '运动', other: '日程' }
 
 /** `YYYY-MM-DD` local day key (bundle-local; cannot import the main plugin). */
 const dayKey = date => {
@@ -61,25 +60,18 @@ export function apply(ctx, config) {
 
   // -- reminder notices -------------------------------------------------------
   // Per-kind presentation over ONE derived set (docs 09 §2.1): tasks can be
-  // completed from the bubble; classes/entries are informational (「知道了」
-  // only). `key` (taskId / class-<courseId>@<day> / entry-<id>) is the
+  // completed from the bubble; entries are informational (「知道了」
+  // only). `key` (taskId / entry-<id>) is the
   // deterministic dedup id — date-scoped where the source repeats, so the
   // bridge keeps no memory beyond the `raised` set.
   const noticeFor = reminder => {
-    if (reminder.kind === 'class') {
-      const room = reminder.classroom ? `（${reminder.classroom}）` : ''
-      return {
-        text: `「${truncate(reminder.title, 40)}」将于 ${shortTime(reminder.start)} 上课${room}，别迟到～`,
-        actions: [{ id: 'ack', label: { zh: '知道了', en: 'Got it' } }],
-      }
-    }
     if (reminder.kind === 'entry') {
       const label = ENTRY_LABELS[reminder.category] ?? ENTRY_LABELS.other
       const when = reminder.allDay
         ? `${reminder.start.slice(0, 10)} 全天`
         : `将于 ${shortTime(reminder.start)} 开始`
       return {
-        text: `「${label}」${truncate(reminder.title, 40)} ${when}，记得参加～`,
+        text: `「${label}」${truncate(reminder.title, 40)} ${when}${reminder.location ? `（${reminder.location}）` : ''}，记得参加～`,
         actions: [{ id: 'ack', label: { zh: '知道了', en: 'Got it' } }],
       }
     }

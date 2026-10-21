@@ -22,12 +22,10 @@ async function loadNotifier() {
 
 const t = key => ({
   'notify.taskTitle': '任务提醒',
-  'notify.classTitle': '上课提醒',
   'notify.entryTitle': '日程提醒',
   'notify.taskBody': '「{title}」将于 {time} 截止',
-  'notify.classBody': '「{title}」将于 {time} 上课{room}',
-  'notify.entryBody': '「{title}」将于 {time} 开始',
-  'notify.entryAllDay': '「{title}」{date} 全天',
+  'notify.entryBody': '「{title}」将于 {time} 开始{location}',
+  'notify.entryAllDay': '「{title}」{date} 全天{location}',
 }[key])
 
 test('task reminder keeps the title verbatim (no $ expansion)', async () => {
@@ -40,19 +38,32 @@ test('task reminder keeps the title verbatim (no $ expansion)', async () => {
   assert.match(out.body, /2026-10-21 12:00/)
 })
 
-test('class reminder carries the classroom', async () => {
+test('ordinary entry reminders carry location verbatim', async () => {
   const { formatReminder } = await loadNotifier()
   const out = formatReminder({
-    kind: 'class', title: '高等数学', start: '2026-10-22T08:00:00+08:00', classroom: '主楼 101',
+    kind: 'entry', title: '学习', start: '2026-10-22T08:00:00+08:00', location: '主楼 $& 101',
   }, t)
-  assert.match(out.body, /主楼 101/)
+  assert.equal(out.title, '日程提醒')
+  assert.match(out.body, /主楼 \$& 101/)
+  assert.match(out.body, /2026-10-22 08:00/)
+})
+
+test('entry reminders omit a missing or nullable location', async () => {
+  const { formatReminder } = await loadNotifier()
+  for (const location of [undefined, null, '']) {
+    const out = formatReminder({
+      kind: 'entry', title: 'Meeting', start: '2026-10-22T08:00:00+08:00', location,
+    }, t)
+    assert.equal(out.body, '「Meeting」将于 2026-10-22 08:00 开始')
+  }
 })
 
 test('all-day entry shows the date, not a clock time', async () => {
   const { formatReminder } = await loadNotifier()
   const out = formatReminder({
-    kind: 'entry', title: '校庆', start: '2026-10-25T00:00:00+08:00', allDay: true,
+    kind: 'entry', title: '校庆', start: '2026-10-25T00:00:00+08:00', allDay: true, location: 'Main hall',
   }, t)
+  assert.match(out.body, /Main hall/)
   assert.match(out.body, /2026-10-25/)
   assert.doesNotMatch(out.body, /00:00/)
 })

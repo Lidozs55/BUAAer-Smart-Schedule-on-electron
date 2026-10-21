@@ -1,6 +1,6 @@
 # 06 · 工具与 Agent 交互规范
 
-> 适用场景：把"课程同步、任务增删改查、日程生成、提醒设置"这类操作交给 Agent 调用。
+> 适用场景：把"来源导入、任务增删改查、日程生成、提醒设置"这类操作交给 Agent 调用。
 > 精确契约以 `cordis_inspect_query { platform: "host", provider: "Service", input: { service: "tools" } }` 的返回为准；本文抄录的是本机 `0.2.0-rc.2` 的实测签名。
 
 ---
@@ -129,7 +129,7 @@ export function apply(ctx, config) {
   - 必填项放 `required`，可选参数给出省略时的行为。
   - 嵌套结构越浅越好；能用扁平参数就不要用对象套对象。
   - `additionalProperties: false` 让你的意图明确（若该版本校验器不支持，也仍建议写）。
-- **返回值**：尽量返回结构化 JSON（id、受影响条数、冲突信息……），而不是一句自然语言。失败时给出**可据以行动的原因**（例如"与课程《编译原理》周三 3-4 节冲突"），而不是 `Error: failed`。
+- **返回值**：尽量返回结构化 JSON（id、受影响条数、冲突信息……），而不是一句自然语言。失败时给出**可据以行动的原因**（例如"与条目「编译原理」周三 10:00–11:30 冲突"），而不是 `Error: failed`。
 - **超时与取消**：长任务设置 `timeoutMs`；在耗时循环里检查 `exec.signal.aborted`。
 - **要做到"后台跑"**：用 `ctx.jobs.start({ kind, label, owner: exec.agent, run })` 起一个作业，并让成功的分支返回结构化的句柄（例如 `{ kind: 'background', jobId }`）；**`ctx.jobs.start()` 发布 id 之后，用该 job 自己的取消信号，而不是 `exec.signal`**。PTC 模式（`run_code`）下绝不能让模型从人类可读文本里解析 jobId。
 - **要给 agent 留异步通知**：`agent.inject({ content, source: { kind: 'plugin', plugin: '<你的插件名>' } })` 追加持久上下文，**它不是唤醒**；`agent` 可能已被释放，记得 try/catch。

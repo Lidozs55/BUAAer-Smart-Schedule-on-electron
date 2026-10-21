@@ -5,8 +5,6 @@
  * delete recreates the row (a new id; ids are not stable across cycles).
  * BatchEditor ports the legacy 批量新建日程 (BatchAddModal): one entry per
  * matching day inside a date range, daily or on chosen weekdays.
- * CourseEditor writes a per-occurrence exception (`course_overrides`) so a
- * holiday / swapped class never mutates the synced weekly rule.
  */
 window.__ModuleLoader__.load({
   id: '@lidozs55/dsh-schedule/client.editors.js',
@@ -17,7 +15,7 @@ window.__ModuleLoader__.load({
     const { useState, useMemo } = React
     const { Modal, ConfirmDialog } = core
 
-    const CATEGORIES = ['course', 'homework', 'exam', 'meeting', 'study', 'sports', 'other']
+    const CATEGORIES = ['homework', 'exam', 'meeting', 'study', 'sports', 'other']
 
     /** `YYYY-MM-DDTHH:mm` for `datetime-local` inputs, browser-local wall time. */
     const toLocalInput = iso => {
@@ -38,6 +36,8 @@ window.__ModuleLoader__.load({
       const [start, setStart] = useState(toLocalInput(initial?.start ?? draft.start ?? new Date()))
       const [end, setEnd] = useState(toLocalInput(initial?.end ?? draft.end ?? new Date(Date.now() + 3_600_000)))
       const [description, setDescription] = useState(initial?.description ?? '')
+      const [location, setLocation] = useState(initial?.location ?? '')
+      const [lock, setLock] = useState(initial?.lock ?? false)
       const [error, setError] = useState(null)
       const [conflicts, setConflicts] = useState(null)
       const [confirming, setConfirming] = useState(false)
@@ -52,6 +52,8 @@ window.__ModuleLoader__.load({
           title,
           category,
           description,
+          location: location.trim() === '' ? null : location,
+          lock,
           start: zoneLocal(start),
           end: zoneLocal(end),
         }
@@ -78,6 +80,8 @@ window.__ModuleLoader__.load({
                 title: initial.title,
                 category: initial.category,
                 description: initial.description,
+                location: initial.location ?? null,
+                lock: initial.lock ?? false,
                 start: initial.start,
                 end: initial.end,
               }
@@ -111,9 +115,14 @@ window.__ModuleLoader__.load({
                   title: initial.title,
                   category: initial.category,
                   description: initial.description,
+                  location: initial.location ?? null,
+                  lock: initial.lock ?? false,
                   start: initial.start,
                   end: initial.end,
                   ...(initial.taskId !== undefined ? { taskId: initial.taskId } : {}),
+                  ...(initial.allDay !== undefined ? { allDay: initial.allDay } : {}),
+                  ...(initial.source !== undefined ? { source: initial.source } : {}),
+                  ...(initial.sourceKey !== undefined ? { sourceKey: initial.sourceKey } : {}),
                 }, { allowConflicts: true })
                 liveId = created.id
                 await refresh()
@@ -162,6 +171,7 @@ window.__ModuleLoader__.load({
                 className: 'bsch-input', type: 'datetime-local', value: end,
                 onChange: e => setEnd(e.target.value),
               })),
+              entryDetails({ t, location, setLocation, lock, setLock }),
               field(t('entry.description'), h('textarea', {
                 className: 'bsch-textarea', value: description, rows: 2,
                 onChange: e => setDescription(e.target.value),
@@ -179,141 +189,23 @@ window.__ModuleLoader__.load({
                 }, t('entry.save')))))
     }
 
+    // The same entry details are available for single and batch creation.
+    function entryDetails({ t, location, setLocation, lock, setLock }) {
+      return h(React.Fragment, null,
+        field(t('entry.location'), h('input', {
+          className: 'bsch-input', value: location,
+          onChange: event => setLocation(event.target.value),
+        })),
+        field(t('entry.lock'), h('input', {
+          type: 'checkbox', checked: lock,
+          onChange: event => setLock(event.target.checked),
+        })),
+        h('div', { className: 'bsch-hint' }, t('entry.lockHint')))
+    }
+
     /** `datetime-local` values are browser-local wall times; emit them
      *  with the browser's explicit offset so the wire format is honest. */
     const zoneLocal = value => core.dateToZonedIso(new Date(value))
-
-    // -- per-occurrence course editor ------------------------------------------
-    /**
-     * Edits ONE projected course occurrence without touching the synced
-     * weekly rule (holiday make-up, swapped room/time, canceled class).
-     * The host stores the change as a `course_overrides` row keyed by
-     * `courseId@baseDay`; dragging/resizing stays disabled in the grid.
-     */
-    function CourseEditor({ t, occurrence, api, undoApi, refresh, onClose }) {
-      const [courseName, setCourseName] = useState(occurrence.courseName)
-      const [teacher, setTeacher] = useState(occurrence.teacher ?? '')
-      const [classroom, setClassroom] = useState(occurrence.classroom ?? '')
-      const [start, setStart] = useState(toLocalInput(occurrence.start))
-      const [end, setEnd] = useState(toLocalInput(occurrence.end))
-      const [error, setError] = useState(null)
-      const [busy, setBusy] = useState(false)
-      const canceled = occurrence.canceled === true
-
-      const previous = {
-        courseId: occurrence.courseId,
-        baseDay: occurrence.baseDay,
-        courseName: occurrence.courseName,
-        teacher: occurrence.teacher ?? '',
-        classroom: occurrence.classroom ?? '',
-        start: occurrence.start,
-        end: occurrence.end,
-        canceled,
-      }
-      const nextInput = (overrides = {}) => ({
-        ...previous,
-        courseName: courseName.trim() === '' ? occurrence.courseName : courseName,
-        teacher,
-        classroom,
-        start: zoneLocal(start),
-        end: zoneLocal(end),
-        canceled: false,
-        ...overrides,
-      })
-      const restorePrevious = async () => {
-        if (occurrence.overridden) await api.saveCourseOccurrence(previous)
-        else await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
-        await refresh()
-      }
-
-      const apply = async (input, label) => {
-        setBusy(true)
-        setError(null)
-        try {
-          await api.saveCourseOccurrence(input)
-          if (undoApi !== undefined) {
-            undoApi.push({
-              label,
-              undo: restorePrevious,
-              redo: async () => { await api.saveCourseOccurrence(input); await refresh() },
-            })
-          }
-          await refresh()
-          onClose()
-        } catch (cause) {
-          setError(cause.message ?? String(cause))
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      const restore = async () => {
-        setBusy(true)
-        setError(null)
-        try {
-          await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
-          if (undoApi !== undefined && occurrence.overridden) {
-            undoApi.push({
-              label: 'course-restore',
-              undo: async () => { await api.saveCourseOccurrence(previous); await refresh() },
-              redo: async () => {
-                await api.resetCourseOccurrence(occurrence.courseId, occurrence.baseDay)
-                await refresh()
-              },
-            })
-          }
-          await refresh()
-          onClose()
-        } catch (cause) {
-          setError(cause.message ?? String(cause))
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      return h(Modal, { title: t('course.edit'), onClose },
-        h('div', null,
-          h('div', { className: 'bsch-hint' }, t('course.fromSync')),
-          field(t('course.name'), h('input', {
-            className: 'bsch-input', value: courseName, autoFocus: true,
-            onChange: e => setCourseName(e.target.value),
-          })),
-          field(t('course.teacher'), h('input', {
-            className: 'bsch-input', value: teacher,
-            onChange: e => setTeacher(e.target.value),
-          })),
-          field(t('course.classroom'), h('input', {
-            className: 'bsch-input', value: classroom,
-            onChange: e => setClassroom(e.target.value),
-          })),
-          field(t('entry.start'), h('input', {
-            className: 'bsch-input', type: 'datetime-local', value: start,
-            onChange: e => setStart(e.target.value),
-          })),
-          field(t('entry.end'), h('input', {
-            className: 'bsch-input', type: 'datetime-local', value: end,
-            onChange: e => setEnd(e.target.value),
-          })),
-          canceled
-            ? h('div', { className: 'bsch-hint' }, t('course.canceledHint'))
-            : null,
-          error !== null ? h('div', { className: 'bsch-error' }, error) : null,
-          h('div', { className: 'bsch-modal-actions' },
-            canceled
-              ? h('button', {
-                  className: 'bsch-btn', disabled: busy, onClick: () => void restore(),
-                }, t('course.restore'))
-              : h('button', {
-                  className: 'bsch-btn is-danger', disabled: busy,
-                  onClick: () => void apply(nextInput({ canceled: true }), 'course-cancel'),
-                }, t('course.cancelThis')),
-            h('button', { className: 'bsch-btn', onClick: onClose }, t('entry.cancel')),
-            h('button', {
-              className: 'bsch-btn is-primary',
-              disabled: busy || courseName.trim() === '',
-              onClick: () => void apply(nextInput(), 'course-update'),
-            }, t('entry.save')))))
-    }
 
     // -- batch create (legacy BatchAddModal 批量新建日程) -----------------------
     const DAY_MS = 86_400_000
@@ -329,6 +221,8 @@ window.__ModuleLoader__.load({
       const [endTime, setEndTime] = useState('10:00')
       const [category, setCategory] = useState('other')
       const [description, setDescription] = useState('')
+      const [location, setLocation] = useState('')
+      const [lock, setLock] = useState(false)
       const [error, setError] = useState(null)
       const [summary, setSummary] = useState(null)
       const [busy, setBusy] = useState(false)
@@ -361,12 +255,14 @@ window.__ModuleLoader__.load({
           title,
           category,
           description,
+          location: location.trim() === '' ? null : location,
+          lock,
           start: zoneLocal(`${day}T${startTime}`),
           end: zoneLocal(`${day}T${endTime}`),
         }))
         try {
           // The legacy batch wrote past conflicts silently; keep that
-          // behavior (a daily 09:00 slot will legitimately touch courses).
+          // behavior (a daily 09:00 slot can legitimately overlap other entries).
           const results = await api.batchCreateEntries(inputs, { allowConflicts: true })
           const okIds = results.filter(row => row.ok).map(row => row.id)
           const ok = okIds.length
@@ -442,6 +338,7 @@ window.__ModuleLoader__.load({
             className: 'bsch-select', value: category,
             onChange: e => setCategory(e.target.value),
           }, CATEGORIES.map(cat => h('option', { key: cat, value: cat }, t('cat.' + cat))))),
+          entryDetails({ t, location, setLocation, lock, setLock }),
           field(t('entry.description'), h('textarea', {
             className: 'bsch-textarea', value: description, rows: 2,
             onChange: e => setDescription(e.target.value),
@@ -462,6 +359,6 @@ window.__ModuleLoader__.load({
             }, busy ? t('batch.creating') : t('batch.create')))))
     }
 
-    return { EventEditor, BatchEditor, CourseEditor, zoneLocal, toLocalInput }
+    return { EventEditor, BatchEditor, zoneLocal, toLocalInput }
   },
 })

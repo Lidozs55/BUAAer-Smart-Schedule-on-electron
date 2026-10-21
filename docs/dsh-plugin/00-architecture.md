@@ -1,7 +1,7 @@
 # 00 · 架构与既定决策
 
 > 本文是本插件的**架构基线**：代码地图、拍板决策、数据模型、平台契约陷阱、旧实现参照与验收状态。
-> DSH 平台通用参考见 `01`–`06`；开发/验证流程见 `08`；**当前进行中的返工任务见 `10`**。
+> DSH 平台通用参考见 `01`–`06`；开发/验证流程见 `08`；UI 历史意图见 `10`，统一条目模型与切换边界见 `13`。
 > 历史过程（迁移清单演化、逐文件清点底稿）已由 git 留档，不再在文档中保留。
 
 ---
@@ -17,7 +17,7 @@
   教务同步与来源状态。
 - **二游前瞻来源** `dsh-plugin/dsh-schedule-gacha/`（`@lidozs55/dsh-schedule-gacha`，
   row id `gacha-schedule`，见 `12`）——只读 B 站官方公告/视频，定时为六款游戏对账
-  「版本前瞻直播 / 版本更新」两条条目。
+  前瞻直播条目；版本更新只保留在来源卡。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
   见 `09`）——只依赖核心的提醒派生集与任务完成写面（气泡上的「已完成」）。
 
@@ -28,13 +28,15 @@ dsh-plugin/dsh-schedule/
 ├── index.js              # Host 入口：inject 声明 + Config + 装配（见 §4.3）
 ├── host/
 │   ├── domain.js         # storage domain spec（schedule_core，§3）
-│   ├── semester.js       # 通用教学周/显示日/课程周次推导（deriveWeekOccurrences）
+│   ├── semester.js       # 通用教学周/显示日换算
+│   ├── migrate.js        # 启动时一次性存量转换，完成后只打开两表模型
+│   ├── model.js          # 类别/类型/来源 ID 与时间格式常量
 │   ├── conflicts.js      # 写入路径的重叠检测
 │   ├── service.js        # 领域服务 scheduleCore（唯一业务实现 + sourceState）
 │   ├── tools.js          # 通用 Agent 工具（sched_*）
 │   ├── api.js            # /api/schedule-core 客户端数据通道
 │   ├── import.js         # 本插件 export 格式的回灌
-│   ├── schedule-reminders.js  # 上课/条目提醒时刻派生（纯函数，§4.4）
+│   ├── schedule-reminders.js  # 条目提醒时刻派生（纯函数，§4.4）
 │   └── reminders.js      # 提醒派生（无状态、无会话投递，§4.4）
 ├── client.js             # Client 入口：依赖序装载分块 + 槽位注册（§6.2）
 └── client.*.js           # 分块：core/notify/gridmath/weekgrid/editors/tasks/calendar/clipboard/settings/style
@@ -48,8 +50,8 @@ dsh-plugin/dsh-schedule-buaa/
 ├── host/
 │   ├── state.js          # sourceState.buaa（学号/学期码，仅供显示）
 │   ├── jw.js             # 北航 SSO + 两个整学期端点（课表 / 考试），无会话缓存
-│   ├── parse.js          # 整学期课表 → 课程规则（周次归一化）
-│   ├── sync.js           # 一次同步：登录 → 拉取 → replaceCourses + 考试对账
+│   ├── parse.js          # 整学期课表 → 按实际周次生成带日期的学习条目
+│   ├── sync.js           # 一次同步：登录 → 拉取 → replaceSourceEntries + 考试任务对账
 │   ├── tools.js          # buaa_course_sync
 │   ├── api.js            # /api/buaa-schedule（设置页通道）
 │   └── time.js           # 来源侧学期码/教学周换算（不 import 核心内部模块）
@@ -93,56 +95,53 @@ dsh-plugin/dsh-schedule-gacha/
 |---|---|
 | R1 | UI 全面贴近 DSH：样式只用 `--dsw-*` token；移除自主调色体系；条目颜色 = 类别枚举 → token 映射（§3.3，唯一一处常量） |
 | R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js` 派生 + `client.notify.js` 轮询通知），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地设计 v2，见 `09`）：策略/真相在核心，投递表面（页面通知/Web Notification + 桌宠气泡）可多个，均不经过 Agent 会话 |
-| R3 | 主面板 = 同一面板内 `日程 \| 任务` 双 tab（窄幅侧栏设计），不搞左右分栏 |
+| R3 | 主面板 = 同一面板内 `日程 \| 任务 \| 剪贴板` 三 tab（窄幅侧栏设计），不搞左右分栏 |
 | R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调 `sched_*` 工具 |
 | R5 | 自动排期、休息条目、由任务生成条目：**不做**（原实现本就是坏的/恒空的） |
 | R6/R7 | 确定性离线解析（ctx.llm seam）、语音、图片 OCR：**不做** |
-| R8 | 剪贴板队列保留为独立面板；导入 = 队列文本发送到新会话，Agent 调批量工具落库 |
+| R8 | 剪贴板队列保留在主面板第三个 tab；导入 = 队列文本发送到新会话，Agent 调批量工具落库 |
 | R9 | 精力周期整个概念（数据/设置/逻辑）：**删除** |
 | R10 | 大组件按职能拆分重写（单组件 ≤300 行），不整体搬运 Vue 代码 |
 | R11 | 模型选择/key/限流均不进插件 |
 
-**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目任意 hex 颜色、`Task.urgency`、课程未来 7 天物化行（改为教学周现算）。旧 README 声称的四象限视图、SPOC 同步、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴。
+**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目任意 hex 颜色、`Task.urgency`、只物化未来 7 天的截断导入。旧 README 声称的四象限视图、SPOC 同步、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴。
 
 ---
 
 ## 3. 数据模型（domain `schedule_core`，version 1，zod）
 
-时间字段**只有一种语义**：带偏移的 ISO 8601（如 `2026-10-19T08:00:00+08:00`）。
+时间统一为带偏移的 ISO 8601（如 `2026-10-19T08:00:00+08:00`）。当前业务表只有 `entries` 与 `tasks`：
 
 ```ts
-courses: { id, courseName, teacher, classroom,
-           dayOfWeek /*1-7*/, weekRange /*"1-16" 文法: N | N-M | 逗号列表*/,
-           startTime /*"HH:mm"*/, endTime /*"HH:mm"*/, updatedAt }
-
-tasks: { id, title, description|null, taskType /*'homework'|'exam'|'lecture'|'other'*/,
-         due /*ISO8601 带时区，必填*/, priority /*'high'|'medium'|'low'*/,
-         completed, entryId /*→entries key|null*/, source /*open id, e.g. 'manual'|'source_sync'|'agent'|'import'*/, updatedAt }
-
-entries: { id, title, description|null, category /*§3.3 枚举*/,
-           start /*ISO8601 带时区*/, end, allDay?, taskId?, updatedAt }
-
-global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
-          sourceState: {} /*来源 id → JSON 字符串；来源插件私有*/ }
+entries: { id, title, description: string|null, location: string|null,
+           lock: boolean /*创建默认 false，仅限制左键快捷移动/缩放*/,
+           source?: string|null, sourceKey?: string|null,
+           category /*§3.3*/, start, end, allDay?, taskId?, updatedAt }
+tasks: { id, title, description: string|null,
+         taskType /*'homework'|'exam'|'lecture'|'other'*/, due,
+         priority /*'high'|'medium'|'low'*/, completed, entryId: string|null,
+         source, updatedAt }
+global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
+          sourceState: {} /*来源 id → JSON 字符串*/,
+          entryModelVersion: 2 }
 ```
 
-- 三表 key 用 `crypto.randomUUID()`；量级（百级/年）下全表遍历可接受，暂不做前缀 key 优化。
-- global 一律空字符串 = 未设置（`null` 是后端"从未写入"哨兵，global schema 不接受可空）。
-- `sourceState` 是来源插件唯一的状态扩展点：核心只做 JSON 往返，不解释内容；新增来源不需要
-  domain 迁移。
-- 课程同步按去重键 `(courseName, dayOfWeek, startTime, weekRange)` 写入，绝不清表重插。
-  部分快照走 `upsertCourses`（只增改）；整份快照走 `replaceCourses`（缺席规则连同例外一并删除）。
-- 通用数据迁移：核心设置卡的「导出 JSON / 导入 JSON」只处理本插件自己的导出格式；
-  「清除全部日程数据」一键清空四张数据表（学期起点与 `sourceState` 保留）。
+- 所有日历块都是普通条目；导入与手建使用同一 CRUD、冲突检测、详情和提醒路径。
+- `lock` 不限制编辑、删除、右键菜单、工具调用或其他行为；多选拖动排除锁定条目，多选删除仍包含它们。
+- `source` / `sourceKey` 只记录归属与稳定身份，不派生另一种 UI 类型。完整来源快照的写法见 `11` §2。
+- 新建 ID 通常由 `crypto.randomUUID()` 生成；来源更新按稳定键保留既有 ID。当前量级允许全表遍历。
+- `sourceState` 是来源私有状态容器；核心只做 JSON 往返，不理解学号、公告或版本。
+- 导出/导入仅含 `global`、`entries`、`tasks`；清空只删除两张业务表，保留学期起点与来源设置。
+- 启动时一次性把存量周规则按实际周次转成带日期的条目；需要 `termStart`，保留改期，取消项不生成；无旧 API/旧 JSON 导入兼容。隔离转换与备份边界见 `13-entry-model.md`。
 
 ### 3.3 类别 → token 映射（唯一一处常量，client 半）
 
 | category | token |
 |---|---|
-| `course` | `--dsw-alias-brand-primary` |
 | `homework` | `--dsw-alias-state-warn-primary` |
 | `exam` | `--dsw-alias-state-error-primary` |
-| `meeting` / `study` / `sports` / `other` | `--dsw-alias-state-idle-primary` |
+| `sports` | `--dsw-alias-state-success-primary` |
+| `meeting` / `study`（学习） / `other` | `color-mix(in srgb, var(--dsw-alias-state-idle-primary) 45%, var(--dsw-alias-label-primary))` |
 
 完成态（经 `task.completed` 关联）：次文字色 + 删除线 + 降透明度，**只改渲染不改数据**。
 
@@ -155,8 +154,8 @@ global: { termStart: '' /*学期第一周周一 YYYY-MM-DD*/,
 | root-scope 页面的写路径 | `ctx.connection.fetch.register()` 在共享 `/api` 前缀上挂精确路由 `/api/schedule-core`（GET snapshot + POST op）。浏览器信任围栏 + cookie 鉴权先于插件 handler，与 Remote RPC 同级可信。裸 `ctx.webServer` 路由**无鉴权**，不承载业务写 |
 | 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
 | 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；未来桥走 `inject: ['scheduleCore']` |
-| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
-| 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（课程现算也参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（工具参数/UI 确认框）放行 |
+| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`，条目带 `kind: 'task'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
+| 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（所有普通条目统一参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（工具参数/UI 确认框）放行 |
 | "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示；提醒子系统不依赖它 |
 
 ### 4.3 Host 的 inject 声明（重要权衡）
@@ -181,7 +180,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 
 ### 4.4 提醒子系统
 
-`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 开关与提前量（任务按作业/考试/其他三档；上课 `classLeadMinutes`；条目 `eventLeadMinutes`，考试类条目走考试档）。派生集 `service.upcomingReminders()` 覆盖三类提醒时刻，条目带 `kind: 'task'|'class'|'entry'` 与确定性 `key`：任务截止（`host/reminders.js` 内联派生）+ 上课/条目（`host/schedule-reminders.js` 纯函数：`weekOccurrences` 投影 + 8 天条目窗，停课不提醒）。
+`attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 与任务作业/考试/其他提前量、条目 `eventLeadMinutes`（考试条目走考试档）。`service.upcomingReminders()` 只有 `kind: 'task'|'entry'` 与确定性 `key`：任务按截止派生，条目由 `host/schedule-reminders.js` 按开始时间派生并携带 `location`。
 
 **提醒是纯派生，不是 Agent 任务**：不写 `ctx.schedule`、不建 Session、不触发 LLM 轮次、无持久状态。
 投递面只有两个，都读同一派生集：
@@ -197,20 +196,18 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 
 ## 5. 接口面（速查）
 
-**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；课程 `listCourses/weekOccurrences(weekStart)/listCourseOverrides/saveCourseOccurrence/resetCourseOccurrence/upsertCourses(rules)/replaceCourses(rules, {source, termCode})`；元 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；维护 `clearAllData()`（清空条目/任务/课程规则/例外，设置保留）；`subscribe(listener)`；`upcomingReminders()`。
+**领域服务 `scheduleCore`**（核心）：条目 `listEntries/createEntry/updateEntry/moveEntry/deleteEntry/batchCreateEntries`；完整来源快照 `replaceSourceEntries(source, inputs)`；任务 `listTasks({scope, includeCompleted})/createTask/updateTask/setTaskCompleted/deleteTask`；元数据 `getMeta/setMeta/snapshot/getSourceState/setSourceState`；维护 `clearAllData()`（清空条目/任务，设置保留）；`subscribe(listener)`；`upcomingReminders()`。
 
-`upsertCourses` 用于**部分快照**（缺席的规则不删，课程行没有 source 列所以不收来源参数）；
-`replaceCourses` 用于**整份快照**（一次拉全时，缺席的规则连同其 per-occurrence 例外一并删除，
-存活的规则保留 id 以便例外继续绑定）。
+`replaceSourceEntries` 先校验整份输入与唯一 `sourceKey`，再增改并删除本来源缺席条目；稳定键保留既有 ID，不触碰其他来源。详细约束见 `11` §2。
 
 **核心 Agent 工具**（`sched_` 前缀，写工具不声明 `isConcurrencySafe`）：两个族工具 `sched_task`、`sched_entry`，用 `action` 选操作（task：`list/create/update/complete/delete`；entry：`list/create/update/delete/batch_create`）。2026-10-20 由 10 个单动词工具合并——工具 schema 每轮都进上下文，动词改由 `action` 枚举表达；格式、类别与冲突细则移入 `schedule` skill 按需加载。返回 canonical value，人读文本只进 `render`。
 
-**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/termWeek/today/courses/occurrences/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
+**核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/weekStart/termWeek/today/entries/tasks）+ `POST`（op 分发，同服务方法；含本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
 
 **北航来源插件**：Agent 工具 `buaa_course_sync`；客户端通道 `GET/POST /api/buaa-schedule`
 （学号、同步）。教务的 `getMyScheduleDetail.do` 一次返回整学期课表且每个格自带星期/时间/周次，
 所以同步没有窗口、没有分页、没有会话缓存：一次登录 + 两个请求（课表、考试），课表按
-`replaceCourses` 整份替换，周次直接取教务给的值，不外推。学期码由用户填的学期起始日期
+`replaceSourceEntries` 对账锁定的学习与考试条目，周次直接取教务给的值并转换为日期，不外推；考试任务同时保留。学期码由用户填的学期起始日期
 （第一周周一，归核心设置页所有）推导，`termCode={Y-1}-{Y}-3` 为 7–8 月的暑期学期。
 设置卡只填学号与密码，不重复学期起点输入。
 `sourceState.buaa = { buaaId, termCode }` 仅供显示。它不注册日历面板/条目工具，也没有 `/buaa-sync`
@@ -219,8 +216,7 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 **二游前瞻来源插件**：Agent 工具 `gacha_schedule`（`list/refresh/apply_official/watch`）；
 客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。只读 B 站
 官方公告/视频，为原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环各维护
-「版本前瞻直播」「版本更新」两条条目；条目带 `[gacha:<id>]` 归属标记，只删改本源条目，
-不触碰课程、考试或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
+前瞻直播条目（推算 `lock=false`，官方明确时刻 `lock=true`）；版本更新只在来源卡显示。条目带来源归属，只删改本源条目，不触碰其他来源或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
 后台每 6 小时刷新（`ctx.timer`，缺失时只停自动刷新，工具与设置卡仍可用）。
 
 **systemPrompt 常驻段**：核心段只保留教学周与工具入口（细则在 `schedule` skill）+ 北航段
@@ -264,25 +260,25 @@ export const inject = ['storageDomain', 'tools', 'connection', 'systemPrompt']
 旧 Electron 版源码（`electron/`、`backend/`、`frontend/` 与根级构建脚本）曾作为意图参照，**已于
 2026-10-20 全部移除**，考古请看 git 历史。逐函数原子功能枚举（约 330 条）的判定结论保留如下：
 
-**已迁移（含等价重设计）**：周视图全部交互（拖选/幽灵/拖动/缩放/undo-redo/黑名单/4–28 轴/
+**已迁移（含等价重设计）**：周视图全部交互（拖选/幽灵/拖动/缩放/undo-redo/条目锁/4–28 轴/
 任意锚点窗口/回今天/键盘）、快速跳转小日历 + 重要度色点、批量新建日程（BatchEditor、
 host `batchCreateEntries`）、任务筛选/排序/统计/进度环/即将到期条、条目与任务编辑器
 （含删除确认——核对时补上的最后缺口）、冲突检测（内置到全部写路径，替代独立接口）、
 教务同步（SSO 登录、整学期课表一次拉取、考试、周次归一化、整份替换）、
-提醒派发（任务截止/上课/条目统一派生 + 页面 Web Notification/toast + 可选桌宠气泡，作业/考试/其他/上课/条目提前量）、
+提醒派发（任务截止/条目统一派生 + 页面 Web Notification/toast + 可选桌宠气泡，作业/考试/其他任务与条目提前量）、
 剪贴板队列（语义改为"交给 Agent 落库"）、设置页（学号/学期起点/同步/导入导出/清空）。
 
 **明确不迁移**（依据 §2 R 决策，勿"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与
 手机端、Flask/JWT/静态托管、自有 LLM key 管理与测试连接、`--primary-color` 主题体系与深色
-模式自有样式（DSH token 覆盖）、条目任意 hex 颜色（类别→token）、`Task.urgency`、课程未来
-7 天物化行（教学周现算）、精力周期、自动排期/休息条目/由任务生成条目、语音/图片 OCR、
+模式自有样式（DSH token 覆盖）、条目任意 hex 颜色（类别→token）、`Task.urgency`、只物化未来
+7 天的截断导入、精力周期、自动排期/休息条目/由任务生成条目、语音/图片 OCR、
 SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接口删过期任务的副作用
-（已知缺陷，不修）、手动课程 CRUD（同步+导入已覆盖获取；一次性课用条目替代）、
+（已知缺陷，不修）、独立导入条目编辑路径（统一到普通条目 CRUD）、
 同步成功后自动刷新课表的颜色联动（完成态只改渲染不改数据）。
 
 **延后项**（有真实价值，按需立项）：桥侧拖拽收纳/常驻徽标见 `09` §4。
 页面提醒已落地（`client.notify.js`，2026-10-21）：30s 轮询 + Web Notification，未授权时页面内 toast；
-上课/条目与任务共用同一派生集。页面关闭后的系统级通知仍取决于桌宠桥或浏览器能力。
+条目与任务共用同一派生集。页面关闭后的系统级通知仍取决于桌宠桥或浏览器能力。
 
 旧实现的已知缺陷清单（时区混存、日期窗口 +1 天、读接口带删除副作用等）在迁移中已全部
 修掉；如需考古看 git 历史里的 `07-migration-map.md`。
@@ -308,7 +304,7 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   （每格自带星期/时间/周次），因此**取消了**逐日抓取窗口（`start_day`/`days`）、`/buaa-sync`
   命令、`checkSession`/`clearSyncSession` 与 30 分钟 SSO 会话缓存、`ctx.jobs` 后台作业以及
   新旧两种解析格式并存——一并删除，不做兼容。教师姓名、学分、课程号等日历不消费的字段在解析时
-  直接丢弃。课程写入改走 `replaceCourses`（整份替换，教务删除的课会消失），学期码由学期起点推导
+  直接丢弃。教学安排按实际周次生成带日期的普通条目，写入走 `replaceSourceEntries`（完整来源快照），学期码由学期起点推导
   并支持暑期学期 `-3`。学期起点输入只在核心设置页保留一处。
 
 ---
@@ -324,7 +320,7 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   拆分后需重新安装 `@buaaer/dsh-schedule-buaa` 并重启；二游前瞻为新 bundle，同样需安装后重启；
   核心与桥仍为 link 安装。
 - **未验证**（后续按需）：键盘快捷键手感、BUAA 同步全流程（需真实学号密码）、提醒投递与
-  桥气泡的真机触发（任务/上课/条目三类）、明暗双主题逐页核对。
+  桥气泡的真机触发（任务/条目两类）、明暗双主题逐页核对。
 - **二轮修订（2026-10-19 深夜，`10` §6）**：真机实测 8+3 问题全部修复并在 scratch 宿主逐项
   验证通过——SSO 401、网格对齐、跨列拖、拖后误点击、幽灵、跳转小日历、剪贴板并入 tab、
   批量新建、中性色提亮、Windows 风格交互模型（右键建幽灵/双击编辑/框选/Del/整批 undo）。
@@ -333,8 +329,8 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   根 `package.json` 精简为仓库元信息（原 electron-builder/cpolar 配置随旧实现作废）；
   根 README 已更新。（`/buaa-import` 与 `scripts/export-legacy-db.mjs` 更早已移除，旧库迁移通道关闭。）
   仓库现在只有 `docs/`、`dsh-plugin/`、`README.md`、`package.json` 四项。
-- **提醒扩展（2026-10-21）**：`host/schedule-reminders.js` 纯函数覆盖上课/条目派生
-  （`node --test` 7 项全绿）；桥按 `kind` 分支，任务可气泡完成。真机触发仍未验证。
+- **提醒扩展（2026-10-21）**：`host/schedule-reminders.js` 纯函数覆盖条目派生
+  （当前用例以测试文件为准）；桥按 `kind` 分支，任务可气泡完成。真机触发仍未验证。
 - **二游前瞻（2026-10-21）**：新增第四个 bundle `@lidozs55/dsh-schedule-gacha`
   （`12`），同样只依赖 `scheduleCore`；单测 16 项全绿，六款游戏真实接口冒烟全部 `ok`。
-  它只读写自己标记的两条条目/游戏，不触碰课程、考试或其他来源。
+  它只维护本来源的前瞻条目；版本更新保留在来源卡，不触碰其他来源。

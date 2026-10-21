@@ -1,27 +1,4 @@
-/**
- * Reminder derivation (R2). No Session delivery, no `ctx.schedule`:
- * reminders are a UI notification concern, not an Agent automation task.
- *
- *   - TASK deadlines derive an `at` moment from the due time minus the
- *     configured lead.
- *   - SCHEDULE items (recurring classes via weekOccurrences + calendar
- *     entries — the 教务 import lands exams/meetings as entries) derive
- *     their moments from the start time minus the class/entry lead.
- *
- * Everything flows out through `service.upcomingReminders()`, sorted and
- * deduplicated by the consumer. Items carry `kind: 'task' | 'class' |
- * 'entry'` and a deterministic date-scoped `key`.
- *
- * Consumers are presentation surfaces, never Agent sessions:
- *   - the client half polls `GET /api/schedule-core?view=reminders` and
- *     raises a Web Notification (or an in-page toast when permission is
- *     absent) while the app is open;
- *   - the optional vivarium bridge turns the same set into pet bubbles.
- *
- * `remindersEnabled: false` turns the whole concept off: the derived set
- * is EMPTY, so every surface goes quiet together.
- */
-import { today } from './semester.js'
+/** Stateless task and calendar-entry reminders, consumed by UI surfaces. */
 import { deriveScheduleReminders, ENTRY_WINDOW_MS } from './schedule-reminders.js'
 
 const leadMinutesFor = (config, taskType) =>
@@ -63,14 +40,12 @@ export function attachReminders(ctx, service, config) {
     return desired
   }
 
-  /** Classes + entries: derived fresh each call, never persisted. */
+  /** Entries: derived fresh each call, never persisted. */
   const desiredScheduleReminders = () => {
     const nowMs = Date.now()
     return deriveScheduleReminders({
-      occurrences: service.weekOccurrences(today()),
       entries: service.listEntries(new Date(nowMs).toISOString(), new Date(nowMs + ENTRY_WINDOW_MS).toISOString()),
       nowMs,
-      classLeadMinutes: config.classLeadMinutes,
       examLeadMinutes: config.examLeadMinutes,
       eventLeadMinutes: config.eventLeadMinutes,
     })

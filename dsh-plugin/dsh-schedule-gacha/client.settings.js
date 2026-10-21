@@ -3,7 +3,7 @@
  *
  * Registered into the core's `schedule.settings.blocks` slot. Each game has
  * its own switch so a user who only follows one or two titles never sees the
- * rest in the calendar. Turning a game off deletes only the two entries this
+ * rest in the calendar. Turning a game off deletes only the preview entries this
  * plugin wrote for it.
  */
 window.__ModuleLoader__.load({
@@ -58,7 +58,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'settings.title': '二游前瞻',
-      'settings.hint': '自动跟踪六款游戏的官方版本更新与前瞻直播；每款游戏各写入一条「版本前瞻直播」和一条「版本更新」。',
+      'settings.hint': '自动跟踪六款游戏的版本信息；仅前瞻直播写入日程，版本更新只作来源信息。推算时间可编辑，官方明确时间锁定拖动。',
       'settings.disabled': '已关闭，不写入日程',
       'settings.waiting': '等待首次刷新…',
       'settings.unknown': '待定',
@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       'settings.title': 'Gacha previews',
-      'settings.hint': 'Tracks official version updates and preview streams for six games; each game gets one preview entry and one update entry.',
+      'settings.hint': 'Tracks six games; only preview streams enter the calendar. Updates stay source information. Inferred times are editable; explicit official times lock dragging.',
       'settings.disabled': 'Off — no entries',
       'settings.waiting': 'Waiting for the first refresh…',
       'settings.unknown': 'TBD',

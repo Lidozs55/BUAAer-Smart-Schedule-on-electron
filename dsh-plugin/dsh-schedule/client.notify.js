@@ -56,23 +56,15 @@ window.__ModuleLoader__.load({
       template.replace(/\{(\w+)\}/g, (_, key) => values[key] ?? '')
 
     const format = (reminder, t) => {
-      if (reminder.kind === 'class') {
-        return {
-          title: t('notify.classTitle'),
-          body: fill(t('notify.classBody'), {
-            title: reminder.title,
-            time: shortTime(reminder.start),
-            room: reminder.classroom ? `（${reminder.classroom}）` : '',
-          }),
-        }
-      }
       if (reminder.kind === 'entry') {
+        const location = reminder.location ? ` (${reminder.location})` : ''
         if (reminder.allDay === true) {
           return {
             title: t('notify.entryTitle'),
             body: fill(t('notify.entryAllDay'), {
               title: reminder.title,
               date: String(reminder.start).slice(0, 10),
+              location,
             }),
           }
         }
@@ -81,6 +73,7 @@ window.__ModuleLoader__.load({
           body: fill(t('notify.entryBody'), {
             title: reminder.title,
             time: shortTime(reminder.start),
+            location,
           }),
         }
       }

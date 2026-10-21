@@ -5,7 +5,7 @@
  * delegates every schedule write to `scheduleCore`.
  *
  * The term anchor is NOT writable here: the core's settings page already
- * owns it (it is what projects every course rule onto dates), so this card
+ * owns it (the source adapter uses it to project teaching weeks onto dates), so this card
  * only reports which term that anchor currently resolves to.
  */
 import { SOURCE_ID } from './state.js'

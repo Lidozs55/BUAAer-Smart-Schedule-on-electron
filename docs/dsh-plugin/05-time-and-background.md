@@ -13,8 +13,8 @@
 | 需求 | 用什么 | 为什么 |
 |---|---|---|
 | 防抖搜索、节流刷新、界面倒计时、"5 分钟后重试一次" | `ctx.timer` | 进程内、随插件卸载自动清理 |
-| 跑几十秒的活儿：抓 7 天课表、批量导出、OCR | `ctx.jobs` | 有 id、有状态、有输出环、可取消、能让 UI 流式看 |
-| 页面内提醒（任务/上课/条目） | 核心 `host/reminders.js` 派生 + `client.notify.js` 30s 轮询 + Web Notification | 纯通知、不建会话、不耗 token；页面打开时有效 |
+| 跑几十秒的活儿：抓取远端数据、批量导出、OCR | `ctx.jobs` | 有 id、有状态、有输出环、可取消、能让 UI 流式看 |
+| 页面内提醒（任务/条目） | 核心 `host/reminders.js` 派生 + `client.notify.js` 30s 轮询 + Web Notification | 纯通知、不建会话、不耗 token；页面打开时有效 |
 | 让 Agent 按周期主动干活（如二游周检） | `ctx.schedule` | 真正需要 Agent 的任务；绑定 Session、会耗 token |
 | 让 Agent 因为定时事件主动干活 | `agent.followup()` | 会唤醒 agent；`agent.inject()` **不会** |
 
@@ -145,7 +145,7 @@ async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: Abor
 
 **现在的实现**（`00` §4.4、`09` §2.1）：
 
-- `host/reminders.js` 无状态派生 `service.upcomingReminders()`（任务/上课/条目三类）；
+- `host/reminders.js` 无状态派生 `service.upcomingReminders()`（任务/条目两类）；
 - 页面打开时 `client.notify.js` 每 30s 轮询 `GET /api/schedule-core?view=reminders`，在
   `at−60s` 窗口内用 Web Notification 呈现；未授权或前台时用页面内 toast；
 - 桌宠桥读同一派生集做气泡，是可选增强；

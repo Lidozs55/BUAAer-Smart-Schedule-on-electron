@@ -3,7 +3,7 @@
  *
  * Every write goes through `service.applyOfficial`, which accepts only a game
  * id plus explicit instants. There is deliberately no entry-id parameter:
- * the Agent can correct the two preview/update entries this plugin owns, and
+ * the Agent can correct source update information and its preview entry, and
  * nothing else in the user's schedule.
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
@@ -47,7 +47,7 @@ const renderRefresh = value => {
 const renderApply = value => {
   const plan = value.plan
   if (plan === null) return `${value.name}：没有可写入的时间`
-  return `${value.name}：更新 ${short(plan.updateStart)}，前瞻 ${short(plan.previewStart)}（已写入日程）`
+  return `${value.name}：更新 ${short(plan.updateStart)}，前瞻 ${short(plan.previewStart)}（更新仅作来源信息，前瞻同步至日程）`
 }
 
 const renderWatch = value => {
@@ -62,7 +62,7 @@ export function registerGachaTools(ctx, service) {
     name: 'gacha_schedule',
     description: [
       '二游前瞻日程：查询/刷新原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环的版本更新与前瞻直播时间，',
-      '或把官方确认的时间写进插件维护的两条日程。只能写这些二游条目，不能改用户的其他日程。',
+      '或核对官方时间：前瞻直播同步至日程，版本更新只保存来源信息。只能写这些二游条目，不能改用户的其他日程。',
       'action=list 查看；refresh 立即刷新；apply_official 写入官方时间；watch 开启/关闭每周 Agent 核对。',
     ].join(''),
     parameters: {

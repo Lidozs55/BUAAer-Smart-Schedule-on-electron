@@ -8,8 +8,8 @@
 
 | 放在哪 | 生命周期 | 适合什么 | 不适合什么 |
 |---|---|---|---|
-| **Session 日志**（`ctx.sessionProjections` 派生） | 随 Session，可 fork/replay | 模型可见、与某次对话绑定的状态（"本会话的课程同步进度"） | 大对象、跨会话共享的业务数据 |
-| **存储 domain**（`ctx.storageDomain`） | 跨会话、跨重启 | 课程表、任务、日历条目、用户设置——本项目 95% 的数据 | 模型需要逐步推理的过程状态 |
+| **Session 日志**（`ctx.sessionProjections` 派生） | 随 Session，可 fork/replay | 模型可见、与某次对话绑定的状态（"本会话的来源导入进度"） | 大对象、跨会话共享的业务数据 |
+| **存储 domain**（`ctx.storageDomain`） | 跨会话、跨重启 | 任务、日历条目、用户设置——本项目 95% 的数据 | 模型需要逐步推理的过程状态 |
 | **凭据**（`ctx.credentials`） | 跨重启 | 长期第三方 token | 一次性密码、业务数据 |
 | **插件配置**（`Config`） | 随 profile，升级保留 | 可调参数（提前提醒几分钟、是否自动同步） | 用户业务数据 |
 | **文件**（`ctx.fs`） | 视后端 | 导入/导出、备份 | 结构化查询（domain 更合适） |
@@ -57,7 +57,7 @@ export interface ProjectionDefinition<K, S> {
 - 客户端需要的派生值声明成 `wire.view`，值在到达 Client 前就算好——**Client 不要自己折叠会话事件**。
 - host reader 要么在 `inject` 里声明 `sessionProjections`，要么在缺失时显式失败。
 
-**本项目的落点**：如果将来做"本周教学周次""今日未完成任务数"这类**会话内**展示，用投影；但课程表/任务本身是跨会话业务数据，属于 domain。
+**本项目的落点**：如果将来做"本周教学周次""今日未完成任务数"这类**会话内**展示，用投影；但条目/任务本身是跨会话业务数据，属于 domain。
 
 ---
 
@@ -74,7 +74,7 @@ import { z } from 'zod'
 const taskSchema = z.object({
   id: z.string(),
   title: z.string(),
-  due: z.string().nullable(),          // RFC 3339；无截止时间用 null
+  due: z.string(),                     // RFC 3339 带时区；任务必须有截止时间
   priority: z.enum(['high', 'medium', 'low']),
   completed: z.boolean(),
   updatedAt: z.string(),
@@ -85,12 +85,11 @@ export const scheduleSpec = defineDomain({
   version: 1,
   tables: {
     tasks: domainTable(taskSchema),
-    courses: domainTable(courseSchema),
     entries: domainTable(entrySchema),
   },
   global: {
-    schema: z.object({ buaaId: z.string().nullable() }),
-    initial: { buaaId: null },
+    schema: z.object({ termStart: z.string(), sourceState: z.record(z.string(), z.string()), entryModelVersion: z.literal(2) }),
+    initial: { termStart: '', sourceState: {}, entryModelVersion: 2 },
   },
 })
 ```
@@ -98,7 +97,7 @@ export const scheduleSpec = defineDomain({
 规则：
 
 - `defineDomain` 是**身份助手**，在**模块加载时**就大声失败：名字不符合 `UNIT_NAME_RE`、`version` 不是非负整数、global schema 接受 `null`（`null` 是后端"从未写入"的哨兵，可空 global 会与"缺失"混淆）——这几种都会抛。表名同样要匹配 `UNIT_NAME_RE`。
-  - **`UNIT_NAME_RE` 是 `/^[a-z][a-z0-9_]*$/`，即 snake_case；表名写 camelCase 会在 import 阶段直接抛**（2026-10-20 实测：`courseOverrides` → `table name 'courseOverrides' must match …`）。后果比"报错"更隐蔽：loader 的 `_init` 捕获 import 异常后**不再创建 fiber**，于是该行既没有 host 插件、也不会进入 `clientModules` 的 `dsh.client` 扫描——**客户端条目整条消失**（`__DSH_BOOT__.entries` 里没有它，样式/面板/settings 卡全不出现），但启动不报错、宿主看起来正常。排查手段：`loader.entries()` 里该行 `fiber === undefined`，或 `clientModules.pkgMeta` 里根本没有该包名的键。表名一律用 snake_case（`course_overrides`），JS 内部变量仍可用 camelCase。
+  - **`UNIT_NAME_RE` 是 `/^[a-z][a-z0-9_]*$/`，即 snake_case；表名写 camelCase 会在 import 阶段直接抛**（2026-10-20 实测：`changeLog` → `table name 'changeLog' must match …`）。后果比"报错"更隐蔽：loader 的 `_init` 捕获 import 异常后**不再创建 fiber**，于是该行既没有 host 插件、也不会进入 `clientModules` 的 `dsh.client` 扫描——**客户端条目整条消失**（`__DSH_BOOT__.entries` 里没有它，样式/面板/settings 卡全不出现），但启动不报错、宿主看起来正常。排查手段：`loader.entries()` 里该行 `fiber === undefined`，或 `clientModules.pkgMeta` 里根本没有该包名的键。表名一律用 snake_case（`change_log`），JS 内部变量仍可用 camelCase。
 - schema 用 **zod**（DSH 侧 `@deepseek-ai/dsh-storage-domain` 依赖 `zod@^4.4.3`）。本仓库的 bundle 需要自己声明 `zod` 依赖；版本要与 dsh 使用的大版本一致（结构兼容），落地前后用 `Config.listConfigs` 拿到的 `packageDir` 核对 dsh 实际装的版本。
   - **声明位置是 `peerDependencies`，不是 `dependencies`**（2026-10-17 M0 验收踩坑修正）：`install_bundle` 以本地目录安装的 bundle 是 pnpm 链接包，宿主按 `routeLinked` 解析其裸导入——只有在插件自身 `package.json` 的 `peerDependencies` 里声明的包名，才会被运行时解析映射到宿主安装侧的共享实例（`readPeerNames` 只读 `peerDependencies`）。写进 `dependencies` 的宿主包（`@deepseek-ai/*`、`zod`）既不会被 pnpm 装进链接目录，也命中不了 peer 拦截，激活即 `ERR_MODULE_NOT_FOUND`。依据：DSH `docs/user/develop/basic/publish.zh.md`（"需要与宿主共享实例的 dsh 包同时声明在 `peerDependencies` 与 `devDependencies` 中"）与 `packages/boot/app-boot/src/profile-resolution/resolver.ts` 的 `routeLinked`。手写 bundle 无类型检查链，`devDependencies` 副本可省。
 - `Spec` 可选字段：`layout?: 'single' | 'per-record'`、`compatibleVersions?: readonly number[]`、`invalidRecords?: 'backup-and-skip'`。
@@ -140,7 +139,7 @@ delete(key: K): Promise<boolean>
 update(key: K, fn: (current: V) => V): Promise<V>
 ```
 
-`Domain` 还有 `global: { get(): G; set(value: G): Promise<void> }`（用 `global` 存单例事实，例如 `buaaId`）。
+`Domain` 还有 `global: { get(): G; set(value: G): Promise<void> }`（用 `global` 存单例事实，例如 `termStart`）。
 
 错误码：`already-open` / `facet-unsupported` / `invalid-record` / `missing-key`（对不存在的记录 `update`）/ `closed`（关闭后的任何使用），后端错误如 `version-mismatch` 原样透出。**不要吞掉它们**——它们全都代表"代码和已存数据不一致"。
 
@@ -148,24 +147,26 @@ update(key: K, fn: (current: V) => V): Promise<V>
 
 ---
 
-## 4. 本项目的数据设计（从 SQLite 4 张表搬过来）
+## 4. 本项目的数据设计
 
-| 现有表 | 迁移落点 | 说明 |
+业务数据只存 `entries` 与 `tasks` 两表，完整字段以 `00-architecture.md` §3 与 `host/domain.js` 为准：
+
+| 事实 | 落点 | 规则 |
 |---|---|---|
-| `user`（单例：`buaa_id`） | domain 的 `global.sourceState.buaa` | 来源私有状态容器。**不要**搬 `password_hash`（死字段）或 `buaa_cookies`（会话 jar 不落盘，也不缓存） |
-| `course` | `courses` 表 | key 用稳定 id；保留 `day_of_week` / `week_range`（"第 1-16 周"）语义——这是课程表的本质，不是冗余 |
-| `task` | `tasks` 表 | `deadline` 统一带时区的 ISO 8601（旧库本地时间当 UTC 存的缺陷已修） |
-| `entries` | `entries` 表 | key 建议 `YYYY-MM-DD#<id>` 或 `id` + 一个"按日索引"记录，避免"取一周"退化成全表扫描 |
-| 提醒设置（`reminderSettings`） | 插件 `Config` | 用户可调、升级保留，正是 Config 的用途 |
-| 过期任务清理（现由 `GET /api/reminders/upcoming` 顺手删） | 明确的服务方法 | 读接口不要再有删除副作用 |
+| 日历占时事项 | `entries` | 所有来源共用标题/起止/类别/地点/锁；导入教学安排用 `study`（学习） |
+| 截止与完成状态 | `tasks` | 任务不占日历时间；`entryId` 可关联条目 |
+| 学期第一周周一 | `global.termStart` | 用于教学周标签与导入时日期换算，不在读取时扩展安排 |
+| 学号、公告版本等来源私有状态 | `global.sourceState.<source>` | 核心只存 JSON；密码、Cookie jar 不持久化 |
+| 提醒提前量 | 插件 `Config` | 任务与条目两类；不保存“是否提醒”业务字段 |
 
 设计要点：
 
-1. **时区只有一种语义**。统一"带偏移的 ISO 8601"，并在 schema 的字段 JSDoc/注释里写清。
-2. **key 设计决定读取成本**。`KvTable` 只有 `get` / `entries` / `keys` / `size`——没有查询语言。要"取某周条目"就必须让 key 前缀或索引记录支持它，别指望全表遍历在生产量级下没事。
-3. **schema 版本**：表结构变更时 bump `version`，需要兼容旧数据就把旧版本号写进 `compatibleVersions`。
-4. **不要持久化“是否已提醒”**：提醒是无状态派生（`upcomingReminders()` 现算，页面轮询 + 桌宠桥消费）；自己的 domain 只存业务事实（截止时间）。浏览器端去重键 `key@at` 只存 localStorage，不属于业务数据。
-5. **一次操作一个方法**：把"完成任务并更新对应条目颜色"做成**一个** domain 写序列（或用一次 `update`），不要留下写一半的状态。
+1. **时区只有一种语义**：带偏移 ISO 8601，schema 明确校验。
+2. **归属不是类型**：`source` / `sourceKey` 是可选来源身份。完整快照使用 `replaceSourceEntries`，稳定键保留 ID，预校验失败不开始写入（见 `11` §2）。
+3. **锁仅限制快捷拖动**：`location` 是可空字符串，`lock` 默认 `false`；锁定不拒绝普通编辑、删除或工具更新。
+4. **启动时一次转换**：按存量实际周次生成带日期的条目，保留改期、跳过取消项；缺学期起点就明确失败且不删除原始数据。完成标记为 `entryModelVersion: 2`。这不是旧 API/旧 JSON 的持续兼容面，备份与切换见 `13-entry-model.md`。
+5. **导出/导入只认当前格式**：`global`、`entries`、`tasks`。清空仅删两张业务表并保留设置。
+6. **提醒无持久业务状态**：`upcomingReminders()` 现算，页面通知与可选桌宠桥读取同一集合。浏览器去重只存 localStorage，不是另一份业务数据。
 
 ---
 

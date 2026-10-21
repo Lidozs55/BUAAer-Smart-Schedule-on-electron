@@ -1,7 +1,7 @@
 # 10 · UI 意图对齐返工(已完成 2026-10-19)
 
 > **状态:八项全部实现,scratch web 宿主验证通过**(验证记录见 §5)。
-> 本文保留为意图对照与验收记录;后续返工以 `00-architecture.md` 为基线。
+> 本文保留为 UI 历史意图与验收记录；当前行为以 `00-architecture.md` 与 `13-entry-model.md` 为准。下文历史验收不是统一条目改造后的真机验证。
 
 > 背景:首轮迁移(commit 18b42b8 之后)为了跑通激活,把原版 UI 大幅压缩了——原版
 > `CalendarView.vue` 单文件 2090 行,迁移后全部客户端仅 ~1370 行,多个交互意图被静默丢弃。
@@ -62,7 +62,7 @@
      23:00 行带日界粗线）；
   2. **分桶规则变更（关键）**：凌晨 00:00–03:59 开始的条目属于**前一格里日**的列、纵向偏移 +1440 分钟。
      现在按 `isoDay(entry.start)` 直接分桶（weekgrid 80-90 行）且被裁剪（117-119 行）——需要一个
-     `gridDay(iso)` 辅助（`localMinutes < 240 ? 前一天 : 当天`）统一用于 entries 与 occurrences；
+     `gridDay(iso)` 辅助（`localMinutes < 240 ? 前一天 : 当天`）用于所有普通 entries；
   3. **宿主窗口边界**：`host/service.js` snapshot 的条目窗口是 `weekStart T00:00 → +7d`（366-370 行），
      应把终点延到 `+7d T04:00`（最后一列要显示次日 0–4 点的条目）。
 - **验收**：网格从 04:00 到次日 04:00；建一个 01:00–02:00 的条目，出现在**前一天**的列底部。
@@ -138,11 +138,9 @@
   1. 锚点 = `dateKey(adjustInitialDate())`（新增 helper，<4 点取昨天）；窗口 = 锚点..锚点+6；
   2. 星期标签**按实际日期的 getDay 计算**，不能用数组下标；
   3. "回今天" → `adjustInitialDate`；prev/next ±7 天；工具栏显示日期范围（P8 与 P3 的标签一起改）；
-  4. **宿主侧连锁**：`host/semester.js:94-111` `deriveWeekOccurrences` 把课程摊到
-     `mondayOf(weekStart)` 那一周——周三锚点的窗口会**缺下周一/二的课**。改为按窗口内 7 个
-     实际日期逐日推导（每天算自己的教学周 + dayOfWeek）；`termWeek` 徽章取窗口锚点所在教学周。
+  4. **宿主侧窗口**：按实际起止日期查询所有普通条目，窗口可跨教学周；`termWeek` 徽章取锚点所在教学周。导入时已经按实际周次生成日期，读取不再扩展周期。
 - **验收**：今天周三时窗口 = 周三→下周二，七天表头星期正确；凌晨 1 点打开显示从昨天开始；
-  课程在下周一/二正常出现。
+  导入条目在下周一/二正常出现。
 
 ## 2. 原版意图逐条清单（用户元要求："大部分意图都要逐条考虑是否迁移"）
 
@@ -152,7 +150,7 @@
 | 2 | 4:00–28:00 时间轴、23:00 日界粗线、24:00 标签隐藏、<4 点归前一天 | **迁移**（P3/P8） |
 | 3 | today 锚点 7 天窗口、回今天、±7 天平移、标题日期范围 | **迁移**（P8） |
 | 4 | 当前时间线 nowIndicator | 已迁移，随 P3 保持 |
-| 5 | 拖动黑名单 course/lecture/exam 不可拖/不可缩 | 拖动与底边 resize 均已迁移（resize 后续补齐，见 `client.weekgrid.js`） |
+| 5 | 限制部分条目的快捷移动/缩放 | 统一为条目 `lock`：仅禁止左键快捷移动/缩放；分类不决定能否拖动。显式编辑、删除、右键菜单仍可用 |
 | 6 | undo/redo ×5 + 键盘 + 撤销删除重建 | **迁移**（P5） |
 | 7 | 点条目开编辑弹窗 | 已迁移 ✓ |
 | 8 | 标题截断（中文 2 单位、20 单位封顶）+ 小字号 + 时长自适应 padding | CSS ellipsis 方案等价，保留现状（有意偏差，无需照抄 padding 逻辑） |
@@ -171,7 +169,7 @@
 
 1. **P7（aN-NaN）+ P1（设置页）**——两处一行级修复，先做先止血；
 2. **P3 + P8（时间轴 + 窗口锚点）**——同一次改造：DAY_START/END、gridDay 分桶、锚点与表头、
-   宿主 deriveWeekOccurrences 逐日化 + 条目窗口终点；这两个互相纠缠，拆开做会返工；
+   宿主普通条目日期查询 + 条目窗口终点；这两个互相纠缠，拆开做会返工；
 3. **P4（定位/分道渲染）**——依赖 P3 的坐标体系定稿；
 4. **P2（拖选新建）**——依赖 P4 的选区几何；
 5. **P5（undo/redo）+ P6（筛选）**——独立，任意顺序；
@@ -204,10 +202,7 @@
 - **新分块 `client.gridmath.js`**:04:00–28:00 网格的全部纯数学(网格分钟、gridDay 分桶、
   anchorToday、星期/周末判定、24 行小时标签表、重叠分道 laneLayout)。weekgrid 只管渲染与
   交互,单文件不再膨胀;加载顺序 core → gridmath → weekgrid。
-- **宿主侧**:`semester.js` 新增 `anchorToday()`;`deriveWeekOccurrences` 改为对窗口 7 个
-  实际日期逐日推导(每天算自己的教学周 + dayOfWeek,窗口可跨教学周、可任意星期锚点);
-  `service.snapshot` 锚点化,条目窗口终点延至 `锚点+7d T04:00`;`api.js` 对 weekStart 做
-  `YYYY-MM-DD` 校验;`conflicts.js` 的本地 mondayOfWeekOf 收敛到 semester 助手。
+- **宿主侧**：`semester.js` 提供 `anchorToday()`；`service.snapshot` 锚点化，普通条目查询窗口终点延至 `锚点+7d T04:00`，`api.js` 校验日期。当前统一模型在导入时生成实际日期，快照只查询条目，不再扩展周期。
 - **undo/redo**:双栈各封顶 5,入栈点 = 拖动 / resize / 编辑器新建 / 更新 / 删除(撤销删除走
   重建,id 会换新,与原版一致接受);键盘 Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y;两按钮常驻工具栏
   禁用态置灰。窗口锚点提升到 CalendarPanel(切 tab 不丢导航位置)。
@@ -269,7 +264,7 @@ scratch web 宿主(`DSH_HOME=<tmp> dsh web`,浏览器自动化)验证结果:
   ——本轮第三个真 bug）。
 - 键盘：`Delete` 删除全部选中（整批一个 undo 步，撤销=整行重建）；`Escape` 清幽灵+选中；
   Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y 沿旧。
-- 多选规则：拖未选中块=只拖它；拖已选中块=整批移动。Shift/Ctrl 点选按用户许可暂缓。
+- 多选规则：拖未选中块=只拖它；拖已选中块=移动选中项中的未锁定行。锁定项仍可选中、编辑与删除。Shift/Ctrl 点选按用户许可暂缓。
 - **move/delete 原生多态收敛（R9-3）**：`service.moveEntry(moves)`/`deleteEntry(ids)` 单个
   走旧契约（返回行/抛错）、数组走批契约（逐条 `{ok, id, conflicts?}` 结果、不抛），消灭
   `moveMany`/`removeMany` 副本；client 只剩 `applyMoves`/`deleteEntries` 两条路径，resize
@@ -287,48 +282,22 @@ scratch web 宿主(`DSH_HOME=<tmp> dsh web`,浏览器自动化)验证结果:
 中性色边框 srgb 0.685；批量周重复 10-19~10-30 一/五 → 4 条（19/23/26/30）；任务页进度环百分比、
 任务描述行、新建默认截止今日 23:59；剪贴板两条入队→清空确认弹窗→空态。
 
-## 三轮（R11，用户实测推翻二轮结论）
+## 三轮命中测试结论与当前统一模型
 
-用户实测：右键课程块建出幽灵而非编辑页、左键按在课程块上出框选、幽灵宽度远小于列宽。
-**二轮验证方法的系统性盲区**：上一轮用 `dispatchEvent` 合成指针事件直发到块元素——合成事件
-不做真实命中测试（hit-testing），`e.target` 永远是派发目标本身；真实鼠标点击的 target 由
-浏览器按顶层元素算。凡是"点在块上却落入空白分支"类 bug，合成事件永远测不出来。
+历史真实鼠标测试发现：`dispatchEvent` 合成事件绕过浏览器 hit-testing，不能证明用户点到的就是预期块。这个验证教训保留；曾经依赖分类区分固定块的处理已由统一条目模型取代。
 
-### 根因（三件套，全部系统性修复）
+当前约束：
 
-1. **R11-1 命中判定按 kind 分层导致固定块落空分支**：`isEntry = kind === 'entry'` 为
-   false 的课程块（occurrence）既非 entry 也非 ghost，直接掉进"空白网格"分支——右键建
-   幽灵、左键起框选、单击清选中，与用户三个症状逐一对应。修复：**任何 `.bsch-block` 上的
-   按压都必须被块分支吞掉**，entry/ghost 之外的一律按"固定块"处理——只清幽灵、不选不拖
-   不编辑（occurrence 由同步的课程规则派生，数据模型不支持改）。规则改为：判定"是不是
-   空白"之前，先判定"是不是任何块"。
-2. **R11-2 幽灵/带状预览没有宽度**：GhostBlock/`is-band` 只设 top/height，绝对定位块
-   无宽度即收缩到内容宽（"新建事件"四字）。修复：`.bsch-block.is-ghost, .is-band` 补
-   `left:2px; width:calc(100% - 4px)`（EventBlock 有内联宽度，不受影响）。
-3. **R11-3 教务类别词汇直通落库**：旧系统 `entry_type` 有插件没有的值（lecture、
-   individual_homework、group_report、exam_prep、work_delivery…），import 原样透传 →
-   `CATEGORY_TOKEN[?] ?? other` 全渲染灰色"其他"；且 service 不枚举校验，非法值一旦落库，
-   重启时存储层 z.enum 失败直接炸掉插件激活。修复三处：import 建立旧词→七类归一化映射
-   （lecture 归 course，*homework/*report/*delivery 归 homework，exam_prep 归 exam）；
-   service `entryInput` 落库前枚举校验（fail fast，防存储中毒）；`sched_entry_create`
-   与批量工具描述里写明"课程类务必传 category:course"，堵住剪贴板→Agent 落库这条路径
-   的默认灰色。
-4. **R11-4 课程色从未显形**：宿主主题把 `--dsw-alias-brand-primary` 解析成 label 白
-   （#f9fafb），course 借 brand 色等于没色。改映射：course=`state-business`（#7aaaff 蓝）、
-   sports=`state-success`（#22c55e 绿）、exam 红/homework 琥珀不变、meeting/study/other
-   维持中性灰——五色可辨（截图验证）。
+- 所有日历块都是普通 entry，命中既有条目不得落入空白网格分支，也不得误建幽灵。
+- `lock=true` 仅禁止左键快捷移动/底边缩放；选中、双击编辑、右键菜单、删除、工具更新和撤销重做照常。混合选择移动只带未锁定行，删除仍作用于全部选中项。
+- 单个与批量编辑器共享 `location` / `lock` 控件；空地点写 `null`，新建锁默认 `false`，撤销更新/删除时保留两字段。
+- 类别仅 `homework/exam/meeting/study/sports/other`，学习显示为「学习」。不做旧词汇归一化或旧 JSON 导入兼容。
+- 幽灵/带状预览保留与普通块一致的列宽；来源条目与手建条目不使用不同编辑器、样式或提醒种类。
 
-### 三轮验证记录（真实 CDP 输入，全部通过）
+离线回归执行真实浏览器分块与事件处理器：
 
-验证改用浏览器真实输入管线（locator click 走 CDP Input 域、cua.drag 真实按下-拖-抬），
-并遵守缓存舞步：**每次改文件 → 重启 host → 逐 chunk `fetch(url,{cache:'reload'})` →
-reload**（本轮两次栽在同 rev 磁盘缓存与服务端启动快照上）。结果：右键课程块=无幽灵无
-弹窗无选中 ✓；课程块上起手拖拽不产生框选（终点覆盖到的 entry 也不被误选）✓；空白框选
-3 条全中 ✓；Del 批删一步 Ctrl+Z 全恢复 ✓；右键空白建幽灵且幽灵宽==条目块宽（content-box
-含内边距边框，两者一致）✓；单击幽灵 200ms 存活、800ms 销毁 ✓；双击幽灵开「新建条目」
-预填 12:15–13:15 且幽灵被消费 ✓；右键条目开「编辑条目」✓；左键选中/点空白清空 ✓；拖动
-+1h 无弹窗尾随、Ctrl+Z 还原 ✓；跨列拖 = 精确 ±24h（周二 16:00 → 周一 16:00）可撤销 ✓；
-Esc 清选中、无关手势（框选起手）销毁幽灵 ✓；点课程块不误伤已有选中 ✓。
-**未能真实输入驱动**：右键拖拽带状预览（cua.drag 只有左键），与幽灵共用同一条 CSS 宽度
-规则，代码级覆盖。旧词归一化实测：`individual_homework→homework`、`exam_prep→exam`、
-`lecture→course`（import 返回 + 快照 + 块颜色三重确认）。
+```sh
+node --test dsh-plugin/dsh-schedule/test/client.entries.test.mjs dsh-plugin/dsh-schedule/test/notify.test.mjs
+```
+
+本轮离线回归在 UTC 与 Asia/Shanghai 各通过 14 项；不等于真实 DOM/React 或鼠标 hit-testing 验收。统一模型改造后的页面交互、主题和通知真机验证仍需单独执行，不能套用前几轮历史截图结论。

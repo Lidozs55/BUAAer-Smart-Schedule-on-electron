@@ -14,7 +14,7 @@ window.__ModuleLoader__.load({
     const { useState, useCallback, useEffect } = React
     const { useScheduleData, useUndo, ConfirmDialog } = core
     const { WeekGrid } = require('@lidozs55/dsh-schedule/client.weekgrid.js')
-    const { EventEditor, BatchEditor, CourseEditor } = require('@lidozs55/dsh-schedule/client.editors.js')
+    const { EventEditor, BatchEditor } = require('@lidozs55/dsh-schedule/client.editors.js')
     const { TasksTab } = require('@lidozs55/dsh-schedule/client.tasks.js')
     const { ClipboardTab } = require('@lidozs55/dsh-schedule/client.clipboard.js')
 
@@ -62,18 +62,6 @@ window.__ModuleLoader__.load({
             // so one row can appear in two snapshots; count it once.
             const seen = new Set()
             for (const snapshot of snapshots) {
-              // Projected course occurrences are real occupied days too:
-              // count them as importance 1 (and into the 3+ density bump).
-              for (const occurrence of snapshot?.occurrences ?? []) {
-                if (occurrence.canceled) continue
-                const id = occurrence.overrideId
-                  ?? `${occurrence.courseId}@${occurrence.start}`
-                if (seen.has(id)) continue
-                seen.add(id)
-                const key = grid.gridDay(occurrence.start)
-                levelByDay[key] = Math.max(levelByDay[key] ?? 0, 1)
-                countByDay[key] = (countByDay[key] ?? 0) + 1
-              }
               for (const entry of snapshot?.entries ?? []) {
                 if (seen.has(entry.id)) continue
                 seen.add(entry.id)
@@ -183,7 +171,6 @@ window.__ModuleLoader__.load({
         ?? (data !== null && data.weekStart === weekStart ? data : null)
       const viewWeek = snapshot?.weekStart ?? weekStart
       const [editor, setEditor] = useState(null)
-      const [courseEditor, setCourseEditor] = useState(null)
       const [batch, setBatch] = useState(false)
       const [conflictBatch, setConflictBatch] = useState(null)
 
@@ -301,11 +288,9 @@ window.__ModuleLoader__.load({
           : h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
               h(WeekGrid, {
                 t, timer, weekStart: viewWeek, today: snapshot?.today,
-                occurrences: snapshot?.occurrences ?? [],
                 entries: snapshot?.entries ?? [],
                 completedTaskIds: completedIds,
                 onEditEntry: block => setEditor({ initial: block.raw }),
-                onEditCourse: occurrence => setCourseEditor(occurrence),
                 // startMin/endMin are grid-relative minutes (04:00 = 240).
                 onCreateAt: (day, startMin, endMin) => setEditor({
                   draft: { start: zonedAt(day, startMin), end: zonedAt(day, endMin) },
@@ -322,12 +307,6 @@ window.__ModuleLoader__.load({
           refresh: refreshBoth,
           onClose: () => setEditor(null),
           onSaved: refreshBoth,
-        }) : null,
-        courseEditor !== null ? h(CourseEditor, {
-          t, api, undoApi,
-          occurrence: courseEditor,
-          refresh: refreshBoth,
-          onClose: () => setCourseEditor(null),
         }) : null,
         batch ? h(BatchEditor, {
           t, api, undoApi,

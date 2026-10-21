@@ -1,7 +1,7 @@
 # 11 · 来源适配器契约（新增学校/导入格式）
 
 > 一句话：**核心 `@lidozs55/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
-> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（课程/考试）与二游前瞻
+> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（学习/考试条目与考试任务）与二游前瞻
 > `@lidozs55/dsh-schedule-gacha`（条目，见 `12-gacha-preview.md`）；前者适合当模板。
 
 ---
@@ -23,7 +23,7 @@
 - 来源插件 `inject: ['scheduleCore', ...]`，核心未激活时 cordis 把来源插件 park 住。
 - 来源插件**不 import 核心包的内部文件**（`host/service.js`、`host/domain.js` 等），也不打开
   `schedule_core` storage domain。核心也不 import 来源包。
-- 卸载来源插件后，已写入的课程/任务/条目与提醒必须原样存在；来源插件只影响"下一次导入"。
+- 卸载来源插件后，已写入的任务/条目与提醒必须原样存在；来源插件只影响"下一次导入"。
 - 一个操作只有一个实现：来源插件的 UI、工具、命令都调核心服务方法。
 
 ---
@@ -36,31 +36,35 @@
 |---|---|
 | 条目 | `listEntries(from?, to?)`、`createEntry`、`updateEntry`、`moveEntry`、`deleteEntry`、`batchCreateEntries` |
 | 任务 | `listTasks({ scope, includeCompleted })`、`createTask`、`updateTask`、`setTaskCompleted`、`deleteTask` |
-| 课程 | `listCourses()`、`weekOccurrences(windowStart)`、`listCourseOverrides()`、`saveCourseOccurrence()`、`resetCourseOccurrence()`、`upsertCourses(rules)`、`replaceCourses(rules, { source, termCode })` |
+| 来源快照 | `replaceSourceEntries(source, inputs)` |
 | 元数据 | `getMeta()`（`termStart`）、`setMeta()`、`getSourceState(source)`、`setSourceState(source, value)` |
 | 订阅 | `subscribe(listener)`、`upcomingReminders()` |
 
 写方法抛 `ServiceError`：`invalid_input` / `not_found` / `conflict`（带 `details.conflicts`）。
 `createEntry`/`updateEntry`/`moveEntry`/`batchCreateEntries` 支持 `{ allowConflicts: true }`。
 
-课程规则对象（**没有 teacher 字段以外的展示用途，能省则省**）：
+条目写入使用同一模型：
 
 ```js
-{ courseName, teacher, classroom, dayOfWeek /*1-7*/,
-  weekRange /* "1-16" 文法 */, startTime /*HH:mm*/, endTime /*HH:mm*/ }
+{
+  title, start, end, category: 'study',
+  location: null, // 可选可空字符串
+  lock: false,    // 默认 false；只禁止左键快捷移动/缩放
+  source: 'example', sourceKey: 'stable-external-id' // 可选归属
+}
 ```
 
-身份键是 `(courseName, dayOfWeek, startTime, weekRange)`。两个写入入口的区别：
+类别仅 `homework/exam/meeting/study/sports/other`，`study` 展示为「学习」。地点不另设来源专用字段。锁定不限制编辑、删除、右键菜单或工具更新。
 
-| 方法 | 语义 | 何时用 |
-|---|---|---|
-| `upsertCourses(rules)` | 只增改，**不删**缺席规则。课程行没有 source 列，因此不接收来源参数 | 只能观测到部分数据（增量、部分 JSON 导入） |
-| `replaceCourses(rules, { source, termCode })` | **整份替换**：缺席的规则连同其 per-occurrence 例外一并删除，存活规则保留 id；同时把 `termCode` 记到 `sourceState[source]` | 一次拿到完整集合（整学期课表、完整导出） |
+`replaceSourceEntries(source, inputs)` 是**该来源完整条目快照**：
 
-`replaceCourses` 是"这份快照就是全部事实"的声明，只在来源真的拉全时才用——用错会删掉用户
-没被同步覆盖的课程。`source`/`termCode` 都可省略，省略时不写 `sourceState`（用于无来源的整份
-覆盖）。核心另提供 `clearAllData()`（清空条目/任务/课程规则/例外四张表，`global` 与
-`sourceState` 保留），供设置页的「清除全部日程数据」使用。
+- `source` 必填且匹配来源 ID 文法；每个输入必须有非空、在本次快照内唯一的 `sourceKey`。
+- 先归一化并校验全部输入，再按 `(source, sourceKey)` 增改与删除；输入校验失败时不开始写入。
+- 稳定键匹配既有条目时保留 ID；缺席条目只从该来源删除；空快照清空该来源，不影响手建或其他来源。
+- 这是完整性声明，不能拿局部抓取结果冒充完整快照；普通增量使用条目 CRUD，不另设类型或周期接口。
+- 来源设置自己写 `setSourceState`，快照接口不解释学期码、教师、游戏或公告。
+
+核心 `clearAllData()` 清空 `entries` / `tasks`，`global` 与来源状态保留。导出/导入也仅含 `global`、`entries`、`tasks`，不接受旧模型 JSON。启动时的隔离存量转换不属于来源公开契约（见 `13-entry-model.md`）。
 
 ---
 
@@ -79,7 +83,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 
 - source id 必须匹配 `^[a-z][a-z0-9_-]*$`。任务的 `source` 标记使用同一文法（不再限定固定枚举），
   新的来源插件可以用自己的 id 标记它创建的任务，例如 `createTask({ ..., source: 'jwxt' })`。
-- 不要往 `sourceState` 放日程业务数据；课程/任务/条目一律走核心服务。
+- 不要往 `sourceState` 放日程业务数据；任务/条目一律走核心服务。
 - 不要放密码。SSO 密码只作当次工具/设置调用入参。
 - **不要缓存会话**：一学期只导一次的来源，用密码换一次登录就够了；进程内 jar 缓存、cookie
   落盘、会话 jar 都会让"下次还能免密"变成需要维护的状态。北航适配器因此没有会话缓存。
@@ -117,8 +121,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
    }
    ```
 
-3. **写入**：解析外部数据 → 调用 `replaceCourses`（拉全时）/ `upsertCourses`（增量时）/
-   `createTask` / `createEntry`。不要复制一套冲突检测或存储实现。
+3. **写入**：解析外部数据 → 调用 `replaceSourceEntries(source, inputs)`（完整来源条目快照），或普通条目 CRUD / `createTask`。为每条来源条目生成稳定 `sourceKey`，不要复制冲突检测或存储实现。
 4. **状态**：学号、学期码等放 `sourceState.<source>`；密码/一次性 token/会话 jar 不入库。
 5. **UI**：往核心的 `schedule.settings.blocks` 子槽位注册设置卡（`ctx.slots.inject('schedule.settings.blocks', …)`），
    不要另开 `settings.section`，也不要复制日历面板。样式复用核心的 `bsch-*` 类（继承 `--dsw-*` token）。
@@ -133,7 +136,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 
 ## 6. 反模式
 
-- ❌ 在来源插件里再 `defineDomain` 一份 `courses/tasks/entries`。
+- ❌ 在来源插件里再 `defineDomain` 一份 `tasks/entries`。
 - ❌ 直接 `import '../schedule-core/host/service.js'` 或复制 service 代码。
 - ❌ 让核心知道"北航"（核心只出现通用概念）。
 - ❌ 把来源学号写进核心 `getMeta()/setMeta()` 的公开契约。
@@ -150,15 +153,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - `host/state.js`：`sourceState.buaa`（学号/学期码，仅供显示）。
 - `host/jw.js`：SSO 登录 + 两个整学期端点（`getMyScheduleDetail.do?type=term`、`exams.do`）；
   登录 jar 只在本次调用内存活，不落盘、不跨调用复用。
-- `host/parse.js`：整学期课表 → 课程规则；`exams.do` → 考试任务草稿。周次从 `cellDetail` 的
-  `教师[3-12周]` 行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开成具体周次；
-  教师姓名/学分/课程号/教务配色等日历不消费的字段就地丢弃。考试只留课程名、开始时刻、地点、
-  座位、结束时刻（任务模型没有结束字段，结束时间进备注）。
-- `host/sync.js`：一次登录 → 课表 `replaceCourses`（整份替换）+ 考试 task 对账。学期码由
-  `termStart` 推导（见下），`-3` 为暑期学期。考试同样按整学期快照对账，身份键是
-  **（课程名 + 考试日期）而不是课程名**——同一门课一学期可能有两场（期中 + 期末），只按名字
-  去重会把它们合成一条。删除范围限定在「本源创建、且日期不早于本学期起点」的任务，上学期
-  的历史不会被清掉；用户手工建的同名考试任务只校正 `due`，标题/优先级/备注归用户。
+- `host/parse.js`：整学期课表按学期起点与教务实际周次生成带日期的普通学习条目；`exams.do` 生成考试条目与考试任务草稿。周次从 `cellDetail` 的周次行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开后只生成实际日期，不外推空周。教学安排使用 `category: 'study'`，考试使用 `exam`，均为 `lock: true`；地点统一为 `location`。教师姓名/学分/课程号/教务配色等日历不消费字段就地丢弃。
+- `host/sync.js`：一次登录 → `replaceSourceEntries('buaa', [...teachingEntries, ...examEntries])` 完整来源快照 + 考试任务对账；重复导入用稳定键保留条目 ID，缺席条目从本来源移除。学期码由 `termStart` 推导（见下），`-3` 为暑期学期。考试任务仍独立保留，身份键是**名称 + 考试日期**，同名期中/期末不能合并。任务删除范围限于本源且日期不早于学期起点；用户手建的同名考试任务只校正 `due`，标题/优先级/备注归用户。
 - `host/tools.js`：`buaa_course_sync`（Agent 调）。
 - `host/api.js`：`/api/buaa-schedule`（设置卡调；只写学号，学期起点归核心设置页）。
 - `client.settings.js`：一张设置卡（学号、密码、导入），注册进核心的 `schedule.settings.blocks`。

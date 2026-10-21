@@ -8,7 +8,7 @@
  *      (Bilibili rate limits full-column reads aggressively)
  *   3. official preview videos + recent official dynamics
  *   4. `planNext` pure rules → update / preview times
- *   5. reconcile exactly two core entries for this game
+ *   5. reconcile the preview entry; updates remain source information only
  *
  * Failures never invent dates: the previous parsed article and plan stay in
  * place, and the error is only reported to the settings card / Agent.
@@ -86,7 +86,7 @@ function descriptionFor(game, state, plan, kind) {
   const evidence = kind === 'preview' ? plan.previewEvidence : plan.updateEvidence
   const confidence = kind === 'preview' ? plan.previewConfidence : plan.updateConfidence
   const lines = [
-    `${entryMarker(game.id)}${kindMarker(kind)} 由「二游前瞻」插件自动维护，请勿手动修改时间。`,
+    `${entryMarker(game.id)}${kindMarker(kind)} 由「二游前瞻」插件同步；推算时间可编辑，官方明确时间锁定拖动。`,
     plan.version === null ? null : `版本：${plan.version}`,
     `依据：${evidence ?? '官方公告'}${confidenceLabel(confidence)}`,
   ]
@@ -192,10 +192,10 @@ function mergeArticle(summary, full) {
   }
 }
 
-export function createGachaService(ctx, { service } = {}) {
+export function createGachaService(ctx, { service, bilibili } = {}) {
   if (service === undefined) throw new Error('gacha-schedule: scheduleCore is required')
 
-  const bili = createBilibili(ctx.logger)
+  const bili = bilibili ?? createBilibili(ctx.logger)
   const state = normalizeState(service.getSourceState(SOURCE_ID))
   const lifetime = new AbortController()
 
@@ -239,62 +239,57 @@ export function createGachaService(ctx, { service } = {}) {
     return persistChain
   }
 
-  async function writeEntry(game, gs, owned, kind, plan) {
-    const start = kind === 'preview' ? plan.previewStart : plan.updateStart
-    const end = kind === 'preview' ? plan.previewEnd : plan.updateEnd
-    if (start === null || end === null) return
-
-    const candidates = owned.filter(entry => ownsKind(entry, game.id, kind))
-    const stored = gs.entries[kind]
-    let target = candidates.find(entry => entry.id === stored) ?? candidates[0] ?? null
-
-    const title = titleFor(game, plan, kind)
-    const description = descriptionFor(game, state, plan, kind)
-    const input = { title, description, category: 'other', start, end }
-
-    if (target === null) {
-      target = await service.createEntry(input, { allowConflicts: true })
-      info('%s entry %s created: %s "%s" (%s → %s)', game.name, kind, target.id, title, short(start), short(end))
-    } else if (target.title !== title
-      || target.description !== description
-      || target.start !== start
-      || target.end !== end) {
-      const before = `${short(target.start)} → ${short(target.end)}`
-      target = await service.updateEntry(target.id, input, { allowConflicts: true })
-      info('%s entry %s updated: %s "%s" (%s → %s, was %s)', game.name, kind, target.id, title, short(start), short(end), before)
-    } else {
-      info('%s entry %s unchanged: %s "%s" (%s → %s)', game.name, kind, target.id, title, short(start), short(end))
-    }
-
-    gs.entries[kind] = target.id
-    const duplicates = candidates
-      .filter(entry => entry.id !== target.id)
-      .map(entry => entry.id)
-    if (duplicates.length > 0) {
-      await service.deleteEntry(duplicates)
-      info('%s entry %s duplicates removed: %s', game.name, kind, duplicates.join(','))
-    }
-  }
-
-  /**
-   * Keep exactly the entries this plugin owns for one game. `preview` is
-   * skipped once it is more than two days old (a late install should not
-   * create a stale reminder); `update` is skipped once its maintenance
-   * window has ended.
-   */
   async function reconcileEntries(game, plan, nowMs) {
-    if (!planIsLive(plan)) return
     const gs = state.games[game.id]
     const owned = service.listEntries().filter(entry => ownsEntry(entry, game.id))
+    // UPDATE is source metadata, never a calendar block, including old imports.
+    const updates = owned.filter(entry => ownsKind(entry, game.id, 'update')).map(entry => entry.id)
+    if (updates.length > 0) await service.deleteEntry(updates)
+    gs.entries.update = null
+    if (!planIsLive(plan)) return
 
-    if (plan.updateStart !== null && plan.updateEnd !== null
-      && new Date(plan.updateEnd).getTime() >= nowMs - DAY_MS) {
-      await writeEntry(game, gs, owned, 'update', plan)
+    const previews = owned.filter(entry => ownsKind(entry, game.id, 'preview'))
+    if (plan.previewStart === null || plan.previewEnd === null
+      || new Date(plan.previewStart).getTime() < nowMs - 2 * DAY_MS) {
+      if (previews.length > 0) await service.deleteEntry(previews.map(entry => entry.id))
+      gs.entries.preview = null
+      gs.syncedPreview = null
+      return
     }
-    if (plan.previewStart !== null && plan.previewEnd !== null
-      && new Date(plan.previewStart).getTime() >= nowMs - 2 * DAY_MS) {
-      await writeEntry(game, gs, owned, 'preview', plan)
+    const desired = {
+      title: titleFor(game, plan, 'preview'),
+      description: descriptionFor(game, state, plan, 'preview'),
+      location: null, category: 'other', allDay: false,
+      start: plan.previewStart, end: plan.previewEnd,
+      lock: plan.previewConfidence === 'official' || plan.previewConfidence === 'agent',
+      source: SOURCE_ID, sourceKey: game.id + ':preview',
     }
+    let target = previews.find(entry => entry.id === gs.entries.preview) ?? previews[0] ?? null
+    if (target === null) {
+      target = await service.createEntry(desired, { allowConflicts: true })
+    } else {
+      const patch = { ...desired }
+      // A refresh owns its source facts, not the user's editable fields.
+      // Compare against our last emitted values, not the last edited row.
+      const previous = gs.syncedPreview
+      for (const key of ['title', 'description', 'location', 'category', 'allDay', 'start', 'end']) {
+        const time = key === 'start' || key === 'end' || key === 'allDay'
+        if (time && desired.lock) continue
+        if (previous !== null && previous !== undefined && target[key] !== previous[key]) {
+          patch[key] = target[key]
+        } else if (!previous && !target.lock) {
+          patch[key] = target[key]
+        }
+      }
+      if (Object.keys(patch).some(key => key === 'allDay'
+        ? Boolean(target[key]) !== Boolean(patch[key]) : target[key] !== patch[key])) {
+        target = await service.updateEntry(target.id, patch, { allowConflicts: true })
+      }
+    }
+    gs.entries.preview = target.id
+    gs.syncedPreview = desired
+    const duplicates = previews.filter(entry => entry.id !== target.id).map(entry => entry.id)
+    if (duplicates.length > 0) await service.deleteEntry(duplicates)
   }
 
   async function removeEntries(gameId) {
@@ -303,6 +298,23 @@ export function createGachaService(ctx, { service } = {}) {
       .map(entry => entry.id)
     if (ids.length > 0) await service.deleteEntry(ids)
     state.games[gameId].entries = { preview: null, update: null }
+    state.games[gameId].syncedPreview = null
+  }
+
+  /** Apply cached source facts immediately, without waiting for a feed refresh. */
+  async function reconcileCachedEntries() {
+    for (const id of GAME_IDS) {
+      if (disposed) return
+      await withGame(id, async () => {
+        if (disposed) return
+        if (state.enabled[id]) {
+          await reconcileEntries(getGame(id), state.games[id].plan, Date.now())
+        } else {
+          await removeEntries(id)
+        }
+      })
+    }
+    await persist()
   }
 
   async function previewVideos(game, current, signal) {
@@ -524,7 +536,7 @@ export function createGachaService(ctx, { service } = {}) {
       const override = validOverride(gsCurrent)
       if (override === null) gsCurrent.override = null
 
-      const officialPlan = gsCurrent.current === null
+      let officialPlan = gsCurrent.current === null
         ? null
         : planNext({
           game,
@@ -533,6 +545,20 @@ export function createGachaService(ctx, { service } = {}) {
           videos,
           announcements: feed,
         })
+      const prior = gsCurrent.officialPlan
+      // A missing teaser/replay (including an outage) is not a retraction.
+      // Retain explicit same-version timing until new explicit evidence or a
+      // new version replaces it; never downgrade confirmed dates to arithmetic.
+      if (prior?.previewConfidence === 'official' && prior.previewStart && prior.previewEnd
+        && new Date(prior.previewStart).getTime() >= nowMs - 2 * DAY_MS
+        && (officialPlan === null || officialPlan.version === prior.version)
+        && officialPlan?.previewConfidence !== 'official') {
+        officialPlan = {
+          ...(officialPlan ?? prior),
+          previewStart: prior.previewStart, previewEnd: prior.previewEnd,
+          previewConfidence: prior.previewConfidence, previewEvidence: prior.previewEvidence,
+        }
+      }
       const plan = mergePlan(game, officialPlan, gsCurrent.override)
 
       gsCurrent.officialPlan = officialPlan
@@ -687,7 +713,10 @@ export function createGachaService(ctx, { service } = {}) {
     const read = key => {
       const value = input[key]
       if (value === undefined || value === null || value === '') return null
-      const normalized = normalizeCstIso(String(value))
+      if (typeof value !== 'string' || !/(?:Z|[+-]\d{2}:\d{2})$/i.test(value)) {
+        throw invalid(key + ' 必须是带时区的 ISO 8601')
+      }
+      const normalized = normalizeCstIso(value)
       if (normalized === null) {
         throw invalid(`${key} 必须是带时区的 ISO 8601：${value}`)
       }
@@ -859,6 +888,7 @@ export function createGachaService(ctx, { service } = {}) {
     requestRefresh,
     refreshGame: id => requestRefresh([id]),
     needsRefresh,
+    reconcileCachedEntries,
     setEnabled,
     applyOfficial,
     clearOverride,

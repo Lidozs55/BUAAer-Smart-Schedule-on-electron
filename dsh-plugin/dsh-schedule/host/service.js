@@ -5,9 +5,9 @@
  * chain, then bumps a revision counter and notifies subscribers.
  */
 import { randomUUID } from 'node:crypto'
-import { ENTRY_CATEGORIES, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, WEEK_RANGE_RE } from './domain.js'
+import { ENTRY_CATEGORIES, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES } from './model.js'
 import { findConflicts } from './conflicts.js'
-import { anchorToday, addDays, dateKey, deriveWeekOccurrences, termWeek, today, zonedIso } from './semester.js'
+import { anchorToday, addDays, dateKey, termWeek, today, zonedIso } from './semester.js'
 
 const nowIso = () => new Date().toISOString()
 
@@ -51,53 +51,12 @@ function normalizeAllDay(day) {
   return { start: dayAt(day, 0), end: dayAt(addDays(day, 1), 0) }
 }
 
-const HHMM_RE = /^([01]\d|2[0-3]):[0-5]\d$/
-
-/**
- * Course-rule identity: a course that meets the same weekday at the same
- * time in the same weeks IS the same weekly rule, whatever the room says.
- */
-const courseKey = rule =>
-  [rule.courseName, rule.dayOfWeek, rule.startTime, rule.weekRange].join('\u0000')
-
-/**
- * One source-supplied weekly rule. Validated here because source plugins
- * persist rules through this service — a malformed row would otherwise only
- * surface at the next domain open.
- */
-function courseRule(rule) {
-  assert(rule !== null && typeof rule === 'object', 'invalid_input', '课程规则必须是对象')
-  const courseName = typeof rule.courseName === 'string' ? rule.courseName.trim() : ''
-  assert(courseName !== '', 'invalid_input', 'courseName 不能为空')
-  assert(Number.isInteger(rule.dayOfWeek) && rule.dayOfWeek >= 1 && rule.dayOfWeek <= 7,
-    'invalid_input', `dayOfWeek 须为 1-7：${rule.dayOfWeek}`)
-  assert(typeof rule.weekRange === 'string' && WEEK_RANGE_RE.test(rule.weekRange),
-    'invalid_input', `weekRange 格式不合法：${rule.weekRange}`)
-  assert(typeof rule.startTime === 'string' && HHMM_RE.test(rule.startTime),
-    'invalid_input', `startTime 须为 HH:mm：${rule.startTime}`)
-  assert(typeof rule.endTime === 'string' && HHMM_RE.test(rule.endTime),
-    'invalid_input', `endTime 须为 HH:mm：${rule.endTime}`)
-  assert(new Date(`1970-01-01T${rule.endTime}:00`) > new Date(`1970-01-01T${rule.startTime}:00`),
-    'invalid_input', 'endTime 必须晚于 startTime')
-  return {
-    courseName,
-    teacher: typeof rule.teacher === 'string' ? rule.teacher.trim() : '',
-    classroom: typeof rule.classroom === 'string' ? rule.classroom.trim() : '',
-    dayOfWeek: rule.dayOfWeek,
-    weekRange: rule.weekRange,
-    startTime: rule.startTime,
-    endTime: rule.endTime,
-  }
-}
-
 /**
  * @param {import('@deepseek-ai/dsh-storage-domain').Domain} domain
  */
 export function createScheduleService(ctx, domain) {
   const entries = domain.table('entries')
   const tasks = domain.table('tasks')
-  const courses = domain.table('courses')
-  const courseOverrides = domain.table('course_overrides')
   let revision = 0
   const listeners = new Set()
 
@@ -114,20 +73,11 @@ export function createScheduleService(ctx, domain) {
 
   const allEntries = () => [...entries.entries()].map(([, row]) => row)
   const allTasks = () => [...tasks.entries()].map(([, row]) => row)
-  const allCourses = () => [...courses.entries()].map(([, row]) => row)
-  const allCourseOverrides = () =>
-    [...courseOverrides.entries()].map(([, row]) => row)
-
-  const termStartOf = () => domain.global.get().termStart || null
-
   /** Gate writes that overlap existing time unless the caller opts in. */
   const guardConflicts = async (candidate, allowConflicts) => {
     if (allowConflicts) return
     const conflicts = findConflicts(candidate, {
       entries: allEntries(),
-      courseRows: allCourses(),
-      courseOverrides: allCourseOverrides(),
-      termStart: termStartOf(),
     })
     if (conflicts.length > 0) {
       throw new ServiceError('conflict', '写入与既有日程冲突', { conflicts })
@@ -140,12 +90,17 @@ export function createScheduleService(ctx, domain) {
       row.title = text(input.title, 'title') ?? assertTitle(input.title)
     }
     if (!partial || input.description !== undefined) row.description = text(input.description, 'description')
+    if (!partial || input.location !== undefined) row.location = text(input.location, 'location')
+    if (!partial || input.lock !== undefined) {
+      assert(input.lock === undefined || typeof input.lock === 'boolean', 'invalid_input', 'lock 必须是布尔值')
+      row.lock = input.lock ?? false
+    }
     if (!partial || input.category !== undefined) {
       // The store's zod schema enum-checks category on every start, and an
       // invalid record fails domain activation — gate it at the write.
-      assert(ENTRY_CATEGORIES.includes(input.category), 'invalid_input',
+      assert(ENTRY_CATEGORIES.includes(input.category ?? (partial ? undefined : 'other')), 'invalid_input',
         `category 须为 ${ENTRY_CATEGORIES.join('|')}：${input.category}`)
-      row.category = input.category
+      row.category = input.category ?? 'other'
     }
     if (input.allDay) {
       const { start, end } = normalizeAllDay(input.day ?? String(input.start).slice(0, 10))
@@ -165,43 +120,18 @@ export function createScheduleService(ctx, domain) {
         'invalid_input', 'end 必须晚于 start')
     }
     if (input.taskId !== undefined) row.taskId = text(input.taskId, 'taskId')
+    if (input.source !== undefined) {
+      const source = text(input.source, 'source')
+      assert(source === null || SOURCE_ID_RE.test(source), 'invalid_input', 'source 必须是合法来源 id')
+      row.source = source
+    }
+    if (input.sourceKey !== undefined) row.sourceKey = text(input.sourceKey, 'sourceKey')
     return row
   }
 
   function assertTitle(title) {
     assert(typeof title === 'string' && title.trim() !== '', 'invalid_input', 'title 不能为空')
     return title.trim()
-  }
-
-  /**
-   * Write parsed rules into the table, keyed by rule identity. A rule that
-   * already exists keeps its id (so per-occurrence exceptions stay bound)
-   * and is refreshed when teacher/classroom/endTime moved.
-   * @param {readonly object[]} rules - already-validated-by-caller raw rows.
-   * @param {Map<string, object>} existing - rule key → row, mutated in place.
-   */
-  const writeCourses = async (rules, existing) => {
-    let created = 0
-    let updated = 0
-    for (const raw of rules) {
-      const rule = courseRule(raw)
-      const key = courseKey(rule)
-      const prior = existing.get(key)
-      const stamp = nowIso()
-      if (prior === undefined) {
-        const row = { ...rule, id: randomUUID(), updatedAt: stamp }
-        await courses.put(row.id, row)
-        existing.set(key, row)
-        created += 1
-      } else if (prior.teacher !== rule.teacher || prior.classroom !== rule.classroom
-        || prior.endTime !== rule.endTime) {
-        const row = { ...prior, ...rule, id: prior.id, updatedAt: stamp }
-        await courses.put(prior.id, row)
-        existing.set(key, row)
-        updated += 1
-      }
-    }
-    return { created, updated }
   }
 
   const service = {
@@ -236,6 +166,7 @@ export function createScheduleService(ctx, domain) {
       if (patch.allDay === false) {
         delete row.allDay
       }
+      assert(new Date(row.end) > new Date(row.start), 'invalid_input', 'end 必须晚于 start')
       await guardConflicts(row, allowConflicts)
       await entries.put(id, row)
       changed(['entries'])
@@ -260,6 +191,7 @@ export function createScheduleService(ctx, domain) {
             `move 需要带时区的 start/end：${move.start} .. ${move.end}`)
           const current = await entries.get(id)
           assert(current, 'not_found', `条目不存在：${id}`)
+          assert(new Date(move.end) > new Date(move.start), 'invalid_input', 'end 必须晚于 start')
           const row = { ...current, start: move.start, end: move.end, updatedAt: nowIso() }
           await guardConflicts(row, allowConflicts)
           await entries.put(id, row)
@@ -309,6 +241,40 @@ export function createScheduleService(ctx, domain) {
         }
       }
       return results
+    },
+
+    /** Reconcile a complete source snapshot, preserving ids for stable keys. */
+    async replaceSourceEntries(source, inputs) {
+      assert(typeof source === 'string' && SOURCE_ID_RE.test(source), 'invalid_input', '来源 id 不合法')
+      assert(Array.isArray(inputs), 'invalid_input', '日程快照必须是数组')
+      const incoming = new Map()
+      for (const input of inputs) {
+        const row = entryInput({ ...input, source })
+        assert(row.sourceKey !== null && row.sourceKey !== undefined, 'invalid_input', '来源条目需要 sourceKey')
+        assert(!incoming.has(row.sourceKey), 'invalid_input', `重复 sourceKey：${row.sourceKey}`)
+        incoming.set(row.sourceKey, row)
+      }
+      const priorRows = allEntries().filter(row => row.source === source)
+      const existing = new Map(priorRows.map(row => [row.sourceKey, row]))
+      let created = 0
+      let updated = 0
+      let cleared = 0
+      // Upserts precede deletions: a failed write never removes the prior snapshot first.
+      for (const [key, input] of incoming) {
+        const prior = existing.get(key)
+        const row = { ...input, id: prior?.id ?? randomUUID(), updatedAt: nowIso() }
+        if (prior && Object.keys(input).every(field => prior[field] === input[field])) continue
+        await entries.put(row.id, row)
+        if (prior) updated += 1
+        else created += 1
+      }
+      for (const prior of priorRows) {
+        if (incoming.has(prior.sourceKey) && existing.get(prior.sourceKey).id === prior.id) continue
+        await entries.delete(prior.id)
+        cleared += 1
+      }
+      if (created + updated + cleared > 0) changed(['entries'])
+      return { created, updated, cleared, total: incoming.size }
     },
 
     // -- tasks --------------------------------------------------------------
@@ -398,7 +364,7 @@ export function createScheduleService(ctx, domain) {
 
     /**
      * Destructive reset behind the settings 清除全部日程数据 button: wipe
-     * entries, tasks, course rules, and per-occurrence overrides. Meta
+     * entries and tasks. Meta
      * (term anchor) and per-source states survive — they are configuration,
      * not data. Reminder derivation is stateless: the next poll simply sees
      * no rows, so there are no durable reminder records to clean up.
@@ -408,142 +374,8 @@ export function createScheduleService(ctx, domain) {
       let deleted = 0
       for (const row of allEntries()) { await entries.delete(row.id); deleted += 1 }
       for (const row of allTasks()) { await tasks.delete(row.id); deleted += 1 }
-      for (const row of allCourses()) { await courses.delete(row.id); deleted += 1 }
-      for (const row of allCourseOverrides()) { await courseOverrides.delete(row.id); deleted += 1 }
-      if (deleted > 0) changed(['entries', 'tasks', 'courses', 'course_overrides'])
+      if (deleted > 0) changed(['entries', 'tasks'])
       return { deleted }
-    },
-
-    // -- courses ------------------------------------------------------------
-    listCourses() {
-      return allCourses().sort((a, b) =>
-        a.dayOfWeek - b.dayOfWeek || a.startTime.localeCompare(b.startTime))
-    },
-
-    /** Project weekly rules onto one displayed window (computed, never stored). */
-    weekOccurrences(windowStart) {
-      return deriveWeekOccurrences(
-        allCourses(), windowStart, termStartOf(), allCourseOverrides())
-    },
-
-    listCourseOverrides() {
-      return allCourseOverrides()
-    },
-
-    /**
-     * Save a manual exception for ONE projected occurrence. The weekly rule
-     * is untouched, so holidays / swapped classes do not leak into other
-     * weeks and a later sync keeps the edit. `canceled` hides the class but
-     * keeps a faint block the client can use to restore it.
-     */
-    async saveCourseOccurrence(input) {
-      const courseId = text(input?.courseId, 'courseId')
-      assert(courseId !== null, 'invalid_input', 'courseId 不能为空')
-      const course = courses.get(courseId)
-      assert(course !== undefined, 'not_found', `课程不存在：${courseId}`)
-      const baseDay = text(input?.baseDay, 'baseDay')
-      assert(isDayKey(baseDay), 'invalid_input', `baseDay 应为 YYYY-MM-DD：${input?.baseDay}`)
-      const courseName = text(input?.courseName, 'courseName') ?? course.courseName
-      assert(isIso(input?.start) && isIso(input?.end), 'invalid_input',
-        '课程修改需要带时区的 start/end')
-      assert(new Date(input.end) > new Date(input.start), 'invalid_input', 'end 必须晚于 start')
-      const row = {
-        id: `${courseId}@${baseDay}`,
-        courseId,
-        baseDay,
-        courseName,
-        teacher: text(input?.teacher, 'teacher') ?? '',
-        classroom: text(input?.classroom, 'classroom') ?? '',
-        start: input.start,
-        end: input.end,
-        canceled: input?.canceled === true,
-        updatedAt: nowIso(),
-      }
-      await courseOverrides.put(row.id, row)
-      changed(['course_overrides'])
-      return row
-    },
-
-    /** Drop an exception → the occurrence follows the synced rule again. */
-    async resetCourseOccurrence(courseId, baseDay) {
-      assert(isDayKey(baseDay), 'invalid_input', `baseDay 应为 YYYY-MM-DD：${baseDay}`)
-      const id = `${courseId}@${baseDay}`
-      const existed = await courseOverrides.delete(id)
-      if (existed) changed(['course_overrides'])
-      return { id, deleted: existed }
-    },
-
-    /**
-     * Upsert course rules without removing any. Identity is the rule tuple,
-     * so re-importing never duplicates. Absent rules are kept: this entry
-     * point accepts PARTIAL rule sets (a JSON import may carry only some
-     * courses).
-     *
-     * A caller holding the COMPLETE set should use `replaceCourses` instead —
-     * that is the only entry point which removes rules, and the only one that
-     * touches per-occurrence exceptions. Course rows carry no source column,
-     * so neither method takes a source id.
-     * @param {readonly object[]} rules - course rules to create or refresh.
-     */
-    async upsertCourses(rules) {
-      assert(Array.isArray(rules), 'invalid_input', '课程规则必须是数组')
-      const existing = new Map(allCourses().map(row => [courseKey(row), row]))
-      const { created, updated } = await writeCourses(rules, existing)
-      if (created + updated > 0) changed(['courses'])
-      return { created, updated, total: rules.length }
-    },
-
-    /**
-     * Replace the whole course table with a source's complete snapshot.
-     * The one timetable an account holds IS a whole-term fact, so a source
-     * that fetched the entire term can state it absolutely: rules the
-     * snapshot no longer contains are dropped together with their
-     * per-occurrence exceptions, and surviving rules keep their ids.
-     * @param {readonly object[]} rules - the complete rule set.
-     * @param {object} [options]
-     * @param {string} [options.source] - source id whose term code is recorded.
-     * @param {string} [options.termCode] - school term the rules belong to.
-     */
-    async replaceCourses(rules, { source, termCode } = {}) {
-      assert(Array.isArray(rules), 'invalid_input', '课程规则必须是数组')
-      const incoming = new Map(
-        rules.map(raw => { const rule = courseRule(raw); return [courseKey(rule), rule] }))
-      const existing = new Map()
-      const dropped = new Set()
-      for (const row of allCourses()) {
-        if (incoming.has(courseKey(row))) existing.set(courseKey(row), row)
-        else dropped.add(row.id)
-      }
-      for (const id of dropped) await courses.delete(id)
-      // Exceptions of dropped rules would otherwise resurrect dead course
-      // ids into the grid; exceptions of surviving rules stay bound.
-      let clearedOverrides = 0
-      if (dropped.size > 0) {
-        for (const row of allCourseOverrides()) {
-          if (!dropped.has(row.courseId)) continue
-          await courseOverrides.delete(row.id)
-          clearedOverrides += 1
-        }
-      }
-      const { created, updated } = await writeCourses(rules, existing)
-      // Record which term this source now holds. Only write when the caller
-      // stated one AND it differs — an unconditional write would bump the
-      // revision (and repaint every client) on every no-op sync.
-      if (source !== undefined && termCode !== undefined) {
-        const stored = service.getSourceState(source)
-        if (stored.termCode !== termCode) {
-          await service.setSourceState(source, { ...stored, termCode })
-          changed(['global'])
-        }
-      }
-      if (created + updated + dropped.size > 0) changed(['courses', 'course_overrides'])
-      return {
-        created,
-        updated,
-        cleared: dropped.size,
-        clearedOverrides,
-        total: rules.length,
-      }
     },
 
     // -- meta & source state -------------------------------------------------
@@ -614,8 +446,6 @@ export function createScheduleService(ctx, domain) {
         termWeek: termWeek(meta.termStart, anchor),
         termWeekToday: termWeek(meta.termStart, today()),
         today: today(),
-        courses: service.listCourses(),
-        occurrences: service.weekOccurrences(anchor),
         weekStart: anchor,
         entries: service.listEntries(dayAt(anchor, 0), dayAt(addDays(anchor, 7), 4 * 60)),
         tasks: service.listTasks(),

@@ -44,8 +44,7 @@ window.__ModuleLoader__.load({
         setBusy(true)
         try {
           setMeta(await api.setMeta(patch))
-          // The term anchor reshapes every projected occurrence — pulse the
-          // mounted calendar views instead of letting them wait out the poll.
+          // Refresh teaching-week badges without waiting for the next poll.
           notifyDataChanged()
           setStatus({ ok: true, text: t('settings.saved') })
         } catch (cause) {
@@ -77,7 +76,7 @@ window.__ModuleLoader__.load({
           setStatus({
             ok: true,
             text: t('settings.imported').replace('{summary}',
-              `课程 ${counts.courses.created + counts.courses.updated}，条目 ${counts.entries.created}（跳过 ${counts.entries.skipped}），任务 ${counts.tasks.created}（跳过 ${counts.tasks.skipped}）`),
+              `条目 ${counts.entries.created}（跳过 ${counts.entries.skipped}），任务 ${counts.tasks.created}（跳过 ${counts.tasks.skipped}）`),
           })
         } catch (cause) {
           setStatus({ ok: false, text: t('settings.importFail').replace('{message}', cause.message) })

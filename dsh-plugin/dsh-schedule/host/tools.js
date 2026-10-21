@@ -12,7 +12,7 @@
  * live in the `schedule` skill and are loaded only when needed.
  */
 import { defineTool } from '@deepseek-ai/dsh-tools'
-import { ENTRY_CATEGORIES, PRIORITIES, TASK_TYPES } from './domain.js'
+import { ENTRY_CATEGORIES, PRIORITIES, TASK_TYPES } from './model.js'
 
 const OUTPUT = { type: 'object', additionalProperties: true }
 
@@ -40,6 +40,8 @@ function entryInput(args) {
   const input = {}
   if (args.title !== undefined) input.title = args.title
   if (args.description !== undefined) input.description = args.description
+  if (args.location !== undefined) input.location = args.location
+  if (args.lock !== undefined) input.lock = args.lock
   if (args.category !== undefined) input.category = args.category
   if (args.start !== undefined) input.start = args.start
   if (args.end !== undefined) input.end = args.end
@@ -82,7 +84,6 @@ async function runEntry(service, args) {
       return {
         count: entries.length,
         entries,
-        occurrences: args.week_start ? service.weekOccurrences(args.week_start) : [],
       }
     }
     case 'create':
@@ -125,7 +126,7 @@ function renderTask(args, value) {
 function renderEntry(args, value) {
   if (conflicted(value)) return conflictText(value)
   switch (args.action) {
-    case 'list': return `${value.count} 条条目、${value.occurrences.length} 个课程出现`
+    case 'list': return `${value.count} 条条目`
     case 'create': return `已创建条目「${value.title}」（${short(value.start)} 起）`
     case 'update': return '条目已更新'
     case 'delete': return '条目已删除'
@@ -162,21 +163,22 @@ const TOOLS = [
   },
   {
     name: 'sched_entry',
-    description: '查询或修改日历条目（会议/自习/运动等占时事项）。action 选操作；时间用带时区 ISO 8601。课程由同步产生，勿手建。规则见 schedule skill。',
+    description: '查询或修改日历条目（会议/自习/运动等占时事项）。action 选操作；时间用带时区 ISO 8601。规则见 schedule skill。',
     parameters: {
       action: { ...enumParam(ENTRY_ACTIONS, 'list 查 / create 建 / update 改 / delete 删 / batch_create 批量建'), required: true },
       id: { type: 'string', description: '条目 id（update/delete）' },
       title: { type: 'string', description: '标题（create/batch_create 必填）' },
       start: isoParam('开始时间（create 必填）；全天条目传当天日期'),
       end: isoParam('结束时间（create 必填）；全天条目可省略'),
-      category: enumParam(ENTRY_CATEGORIES, '类别；课程类必须 course，否则显示灰色'),
+      category: enumParam(ENTRY_CATEGORIES, '类别，默认 other'),
       description: { type: 'string', description: '备注；更新时传空字符串表示清除' },
+      location: { type: 'string', description: '地点，可省略；空字符串清除' },
+      lock: { type: 'boolean', description: '只禁止日程表左键快捷拖动，默认 false；仍可编辑和删除' },
       all_day: { type: 'boolean', description: '全天条目' },
       task_id: { type: 'string', description: '关联任务 id，可省略' },
       allow_conflicts: { type: 'boolean', description: '允许重叠，默认 false' },
       from: isoParam('list 窗口起点（含）'),
       to: isoParam('list 窗口终点（不含）'),
-      week_start: { type: 'string', description: 'list 附带该教学周课程出现；YYYY-MM-DD（周一）' },
       entries: {
         type: 'array',
         description: 'batch_create 的条目数组，每项含 title/start/end 及可选字段',

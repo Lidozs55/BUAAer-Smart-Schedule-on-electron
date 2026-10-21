@@ -250,13 +250,19 @@ export function extractVersionEnd(text) {
 }
 
 /** Explicit preview date/time from a teaser, article or dynamic. */
-export function extractPreviewAt(text, publishTime, game) {
+export function extractExplicitPreviewAt(text, publishTime) {
   if (typeof text !== 'string') return null
   const explicit = dateTimes(text, publishTime).find(item => {
     const around = context(text, item.index, item.text.length, 80)
     return /前瞻|直播|播出/.test(around)
   })
-  if (explicit !== undefined) return explicit.iso
+  return explicit?.iso ?? null
+}
+
+export function extractPreviewAt(text, publishTime, game) {
+  if (typeof text !== 'string') return null
+  const explicit = extractExplicitPreviewAt(text, publishTime)
+  if (explicit !== null) return explicit
 
   // Date-only teasers ("前瞻定档10月30日") use the usual 19:30 slot.
   const dateOnly = /(?:前瞻|直播)[^。\n]{0,40}?(\d{1,2})\s*月\s*(\d{1,2})\s*日/.exec(text)
@@ -542,8 +548,9 @@ export function planNext({ game, current, now = new Date().toISOString(), videos
       text: announcedPreview.text, publishTime: announcedPreview.pubdate, game,
     })
     previewStart = parsed.previewAt
-    previewConfidence = 'official'
-    previewEvidence = '官方前瞻公告'
+    const explicit = extractExplicitPreviewAt(announcedPreview.text, announcedPreview.pubdate)
+    previewConfidence = explicit === previewStart ? 'official' : 'inferred'
+    previewEvidence = explicit === previewStart ? '官方前瞻公告（明确日期与时间）' : '官方前瞻日期，时刻按惯例推算'
   }
 
   if (previewStart === null && videos.length > 0) {
@@ -557,8 +564,10 @@ export function planNext({ game, current, now = new Date().toISOString(), videos
       .sort((a, b) => Number(b.pubdate) - Number(a.pubdate))
     if (matching.length > 0) {
       previewStart = previewFromVideo(matching[0], game, updateStart)
-      previewConfidence = previewStart === null ? null : 'video'
-      previewEvidence = previewStart === null ? null : `官方前瞻视频 ${matching[0].bvid ?? ''}`.trim()
+      const explicit = extractExplicitPreviewAt(matching[0].title, matching[0].pubdate)
+      previewConfidence = previewStart === null ? null : explicit === previewStart ? 'official' : 'inferred'
+      previewEvidence = previewStart === null ? null
+        : `${explicit === previewStart ? '官方视频标题明确时间' : '官方视频发布日期回推（非确认时间）'} ${matching[0].bvid ?? ''}`.trim()
     }
   }
 

@@ -28,6 +28,7 @@ export const emptyGameState = () => ({
   plan: null,
   override: null,
   entries: { preview: null, update: null },
+  syncedPreview: null,
 })
 
 function normalizeArticle(raw) {
@@ -86,6 +87,7 @@ function normalizeGameState(raw) {
     plan: normalizePlan(raw.plan),
     override: normalizeOverride(raw.override),
     entries: { preview: entry('preview'), update: entry('update') },
+    syncedPreview: isObject(raw.syncedPreview) ? raw.syncedPreview : null,
   }
 }
 

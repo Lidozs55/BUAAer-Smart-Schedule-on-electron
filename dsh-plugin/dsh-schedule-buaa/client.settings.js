@@ -53,15 +53,15 @@ window.__ModuleLoader__.load({
       'settings.save': '保存',
       'settings.saved': '已保存',
       'settings.password': '统一认证密码（仅当次使用，不保存）',
-      'settings.sync': '导入整学期课表',
+      'settings.sync': '导入整学期教学安排',
       'settings.needId': '请先填写并保存学号',
       'settings.needPassword': '请填写统一认证密码',
       'settings.needTermStart': '请先在上方填写「学期起始日期（第一周周一）」',
       'settings.syncing': '正在登录教务并导入…',
       'settings.term': '导入学期',
       'settings.unset': '学期起始日期未设置',
-      'settings.done': '导入完成：课程 {courses} 条（新增 {created}、更新 {updated}、移除 {cleared}），覆盖第 {weeks} 周，考试 {exams} 条',
-      'settings.overwrite': '每次导入覆盖整份课表：教务里已删除的课程会随之移除。',
+      'settings.done': '导入完成：日程 {entries} 条（新增 {created}、更新 {updated}、移除 {cleared}），覆盖第 {weeks} 周，考试 {exams} 条',
+      'settings.overwrite': '每次导入替换整学期教学与考试日程：教务里已删除的安排会随之移除。',
       'settings.examFailed': '考试安排未能读取：{message}',
     }
 
@@ -78,8 +78,8 @@ window.__ModuleLoader__.load({
       'settings.syncing': 'Logging in and importing…',
       'settings.term': 'Import term',
       'settings.unset': 'Term start is not set',
-      'settings.done': 'Imported {courses} courses ({created} new, {updated} updated, {cleared} removed), weeks {weeks}, {exams} exams',
-      'settings.overwrite': 'Each import replaces the whole timetable: courses removed from JW disappear here.',
+      'settings.done': 'Imported {entries} schedule entries ({created} new, {updated} updated, {cleared} removed), weeks {weeks}, {exams} exams',
+      'settings.overwrite': 'Each import replaces all teaching and exam entries from JW.',
       'settings.examFailed': 'Exam list could not be read: {message}',
     }
 
@@ -176,12 +176,13 @@ window.__ModuleLoader__.load({
     }
 
     const finishText = (t, summary) => t('settings.done')
-      .replace('{courses}', String(summary.courses.total))
-      .replace('{created}', String(summary.courses.created))
-      .replace('{updated}', String(summary.courses.updated))
-      .replace('{cleared}', String(summary.courses.cleared))
+      .replace('{entries}', String(summary.entries.total))
+      .replace('{created}', String(summary.entries.created))
+      .replace('{updated}', String(summary.entries.updated))
+      .replace('{cleared}', String(summary.entries.cleared))
       .replace('{weeks}', summary.weeksCovered.join('、'))
       .replace('{exams}', String(summary.exams.total))
+      + (summary.exams.failed ? `；${t('settings.examFailed').replace('{message}', summary.exams.failed)}` : '')
 
     return { SettingsSection, zh, en }
   },
