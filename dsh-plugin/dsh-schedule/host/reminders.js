@@ -25,7 +25,8 @@ export function attachReminders(ctx, service, config) {
     const desired = []
     for (const task of service.listTasks({ scope: 'all', includeCompleted: false })) {
       const dueMs = new Date(task.due).getTime()
-      const target = dueMs - leadMinutesFor(config, task.taskType) * 60_000
+      const lead = task.remindLead ?? leadMinutesFor(config, task.taskType)
+      const target = dueMs - lead * 60_000
       if (!Number.isFinite(target) || !(target > now)) continue
       desired.push({
         kind: 'task',

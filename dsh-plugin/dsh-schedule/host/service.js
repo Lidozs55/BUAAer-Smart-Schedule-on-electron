@@ -5,7 +5,7 @@
  * chain, then bumps a revision counter and notifies subscribers.
  */
 import { randomUUID } from 'node:crypto'
-import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
+import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, REMIND_LEAD_MAX_MINUTES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
 import { findConflicts } from './conflicts.js'
 import { anchorToday, addDays, dateKey, termWeek, today, zonedIso } from './semester.js'
 
@@ -37,6 +37,15 @@ const text = (value, field) => {
   assert(typeof value === 'string', 'invalid_input', `${field} 必须是字符串`)
   const trimmed = value.trim()
   return trimmed === '' ? null : trimmed
+}
+
+/** Optional per-row reminder override in minutes; null/absent = tier default. */
+const remindLead = value => {
+  if (value === null || value === undefined) return null
+  assert(typeof value === 'number' && Number.isInteger(value)
+    && value >= 0 && value <= REMIND_LEAD_MAX_MINUTES, 'invalid_input',
+    `remindLead 须为 0–${REMIND_LEAD_MAX_MINUTES} 的整数分钟或 null`)
+  return value
 }
 
 /** Local-zoned ISO at `dayKey` + minutes-from-midnight (handles overflow). */
@@ -127,6 +136,7 @@ export function createScheduleService(ctx, domain) {
       row.source = source
     }
     if (input.sourceKey !== undefined) row.sourceKey = text(input.sourceKey, 'sourceKey')
+    if (input.remindLead !== undefined) row.remindLead = remindLead(input.remindLead)
     return row
   }
 
@@ -267,6 +277,10 @@ export function createScheduleService(ctx, domain) {
       for (const [key, input] of incoming) {
         const prior = existing.get(key)
         const row = { ...input, id: prior?.id ?? randomUUID(), updatedAt: nowIso() }
+        // A user-set reminder override is preference, not snapshot data:
+        // keep it across re-syncs unless the source snapshot sets its own.
+        if (prior?.remindLead !== null && prior?.remindLead !== undefined
+          && row.remindLead === undefined) row.remindLead = prior.remindLead
         if (prior && Object.keys(input).every(field => prior[field] === input[field])) continue
         await entries.put(row.id, row)
         if (prior) updated += 1
@@ -334,6 +348,7 @@ export function createScheduleService(ctx, domain) {
       } else if (!partial && current === undefined) {
         row.source = 'manual'
       }
+      if (input.remindLead !== undefined) row.remindLead = remindLead(input.remindLead)
       return row
     },
 

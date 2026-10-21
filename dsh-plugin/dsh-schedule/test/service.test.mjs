@@ -48,6 +48,36 @@ test('lock does not restrict explicit update, move, conflict detection or deleti
   assert.equal(service.listEntries().length, 0)
 })
 
+test('remindLead validates, persists, clears and round-trips through import', async () => {
+  const service = makeService()
+  const row = await service.createEntry(input({ remindLead: 1440 }))
+  assert.equal(row.remindLead, 1440)
+  assert.equal((await service.updateEntry(row.id, { remindLead: null })).remindLead, null)
+  await service.updateEntry(row.id, { remindLead: 0 })
+  assert.equal(service.listEntries()[0].remindLead, 0)
+  await assert.rejects(service.updateEntry(row.id, { remindLead: -5 }), /remindLead/)
+  await assert.rejects(service.updateEntry(row.id, { remindLead: 1.5 }), /remindLead/)
+  await assert.rejects(service.updateEntry(row.id, { remindLead: 10081 }), /remindLead/)
+  const task = await service.createTask({ title: '作业', due: '2026-10-23T23:59:00+08:00', remindLead: 30 })
+  assert.equal(task.remindLead, 30)
+  await assert.rejects(
+    service.createTask({ title: '坏值', due: '2026-10-23T23:59:00+08:00', remindLead: '30' }), /remindLead/)
+  const other = makeService()
+  await importSchedulePayload(other, { entries: [service.listEntries()[0]], tasks: [task] })
+  assert.equal(other.listEntries()[0].remindLead, 0)
+  assert.equal(other.listTasks()[0].remindLead, 30)
+})
+
+test('source re-sync keeps a user-set remindLead unless the snapshot sets its own', async () => {
+  const service = makeService()
+  await service.replaceSourceEntries('buaa', [input({ sourceKey: 'one' })])
+  await service.updateEntry(service.listEntries()[0].id, { remindLead: 60 })
+  await service.replaceSourceEntries('buaa', [input({ sourceKey: 'one', title: '新标题' })])
+  assert.equal(service.listEntries()[0].remindLead, 60)
+  await service.replaceSourceEntries('buaa', [input({ sourceKey: 'one', remindLead: 15 })])
+  assert.equal(service.listEntries()[0].remindLead, 15)
+})
+
 test('source snapshot preserves IDs, removes only own missing rows and validates before writes', async () => {
   const service = makeService()
   const manual = await service.createEntry(input())

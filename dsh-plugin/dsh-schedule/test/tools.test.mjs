@@ -167,6 +167,19 @@ test('Agent schema exposes optional location and lock, with dynamic category ids
   assert.equal(tools.size, 0)
 })
 
+test('remind_lead maps onto remindLead for entries and tasks, -1 clears', async () => {
+  const { execute, tools } = fixture()
+  const taskSpec = tools.get('sched_task')
+  const runTask = args => taskSpec.execute(args, { signal: new AbortController().signal })
+  const created = await execute({ action: 'create', ...input({ remind_lead: 1440 }) })
+  assert.equal(created.remindLead, 1440)
+  assert.equal((await execute({ action: 'update', id: created.id, remind_lead: -1 })).remindLead, null)
+  const task = await runTask({ action: 'create', title: '作业', due: '2026-10-24T23:59:00+08:00', remind_lead: 0 })
+  assert.equal(task.remindLead, 0)
+  assert.equal((await runTask({ action: 'update', id: task.id, remind_lead: -1 })).remindLead, null)
+  await assert.rejects(execute({ action: 'create', ...input({ remind_lead: -5 }) }), /remindLead/)
+})
+
 test('Agent create/update/list/batch share location and lock semantics with UI service', async () => {
   const { execute } = fixture()
   const created = await execute({ action: 'create', ...input({ location: '图书馆', lock: true }) })

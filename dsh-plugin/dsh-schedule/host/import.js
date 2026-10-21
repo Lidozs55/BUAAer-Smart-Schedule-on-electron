@@ -2,9 +2,12 @@
  * Full-domain import for the shape this plugin's own export produces
  * (`settings.section` → export JSON). Round-tripping an export must work.
  */
-import { cloneCategories, PRIORITIES } from './model.js'
+import { cloneCategories, PRIORITIES, REMIND_LEAD_MAX_MINUTES } from './model.js'
 
 const priorityOf = value => (PRIORITIES.includes(value) ? value : 'medium')
+
+const remindLeadOf = value => (typeof value === 'number' && Number.isInteger(value)
+  && value >= 0 && value <= REMIND_LEAD_MAX_MINUTES ? value : undefined)
 
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value)
 
@@ -71,6 +74,7 @@ export async function importSchedulePayload(service, payload) {
       start,
       end: entry.end,
       allDay: entry.allDay === true || undefined,
+      remindLead: remindLeadOf(entry.remindLead),
     }, { allowConflicts: true })
     existingEntries.set(dedupKey, created.id)
     if (entry.id !== undefined) entryIdMap.set(String(entry.id), created.id)
@@ -93,6 +97,7 @@ export async function importSchedulePayload(service, payload) {
       due,
       priority: priorityOf(task.priority),
       completed: task.completed === true,
+      remindLead: remindLeadOf(task.remindLead),
       entryId: task.entryId === undefined || task.entryId === null
         ? null
         : entryIdMap.get(String(task.entryId)) ?? null,

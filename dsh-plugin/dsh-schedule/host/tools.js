@@ -41,6 +41,7 @@ function taskPatch(args) {
   if (args.priority !== undefined) patch.priority = args.priority
   if (args.completed !== undefined) patch.completed = args.completed
   if (args.entry_id !== undefined) patch.entryId = args.entry_id
+  if (args.remind_lead !== undefined) patch.remindLead = leadOf(args.remind_lead)
   return patch
 }
 
@@ -55,8 +56,12 @@ function entryInput(args) {
   if (args.end !== undefined) input.end = args.end
   if (args.all_day !== undefined) input.allDay = args.all_day
   if (args.task_id !== undefined) input.taskId = args.task_id
+  if (args.remind_lead !== undefined) input.remindLead = leadOf(args.remind_lead)
   return input
 }
+
+/** `-1` (or null) clears the override back to the global tier default. */
+const leadOf = value => (value === -1 || value === null ? null : value)
 
 async function runTask(service, args) {
   switch (args.action) {
@@ -163,6 +168,7 @@ const TOOLS = [
       description: { type: 'string', description: '备注；更新时传空字符串表示清除' },
       completed: { type: 'boolean', description: '完成状态；complete 省略为 true，false 表示撤销完成' },
       entry_id: { type: 'string', description: '关联的日历条目 id，可省略' },
+      remind_lead: { type: 'number', description: '提醒提前分钟数（0=截止时提醒，1440=提前 1 天；-1 或省略=跟随全局默认设置）' },
       scope: enumParam(['today', 'week', 'overdue', 'all'], 'list 范围，默认 all；week 为从现在起未来 7 天，非自然周'),
       include_completed: { type: 'boolean', description: 'list 是否含已完成，默认 false' },
     },
@@ -184,6 +190,7 @@ const TOOLS = [
       lock: { type: 'boolean', description: '只禁止页面快捷拖动/缩放，默认 false；仍可工具改期、编辑和删除' },
       all_day: { type: 'boolean', description: '单日全天条目，start 传 YYYY-MM-DD，按服务本地时区处理' },
       task_id: { type: 'string', description: '关联任务 id，可省略' },
+      remind_lead: { type: 'number', description: '提醒提前分钟数（0=开始时提醒，1440=提前 1 天；-1 或省略=跟随全局默认设置）' },
       allow_conflicts: { type: 'boolean', description: '经用户确认后允许时间重叠，默认 false；不覆盖已有条目；批量时作用于全部项' },
       from: isoParam('list 查询窗口起点（含），带时区 ISO 8601；返回与窗口相交的条目'),
       to: isoParam('list 查询窗口终点（不含），带时区 ISO 8601；省略边界则不限制该侧'),

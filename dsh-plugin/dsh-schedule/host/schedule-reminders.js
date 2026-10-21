@@ -6,7 +6,7 @@ export function deriveScheduleReminders({ entries, nowMs, examLeadMinutes, event
   for (const entry of entries) {
     const startMs = Date.parse(entry.start)
     if (!Number.isFinite(startMs)) continue
-    const lead = entry.category === 'exam' ? examLeadMinutes : eventLeadMinutes
+    const lead = entry.remindLead ?? (entry.category === 'exam' ? examLeadMinutes : eventLeadMinutes)
     const atMs = startMs - lead * 60_000
     if (!(atMs > nowMs)) continue
     out.push({

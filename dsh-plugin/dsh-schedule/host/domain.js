@@ -9,9 +9,16 @@
 import { z } from 'zod'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 
-import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
+import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, REMIND_LEAD_MAX_MINUTES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
 
 const isoDateTime = z.string().regex(ISO_DATETIME_RE)
+
+/**
+ * Per-row reminder override, minutes before the anchor moment (task due /
+ * entry start). Absent or null follows the global tier defaults — the
+ * override is pure presentation data, never required.
+ */
+const remindLead = z.number().int().min(0).max(REMIND_LEAD_MAX_MINUTES).nullable().optional()
 
 /**
  * Global singletons may not be nullable (null is the backend's "never
@@ -52,6 +59,7 @@ const taskSchema = z.object({
   /** Key of the linked entry in `entries`, or null. */
   entryId: z.string().nullable(),
   source: z.string().regex(SOURCE_ID_RE),
+  remindLead,
   updatedAt: isoDateTime,
 })
 
@@ -70,6 +78,7 @@ const entrySchema = z.object({
   allDay: z.boolean().optional(),
   /** Key of the linked task in `tasks`, when created from one. */
   taskId: z.string().nullable().optional(),
+  remindLead,
   updatedAt: isoDateTime,
 })
 

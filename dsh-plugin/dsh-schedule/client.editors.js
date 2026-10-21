@@ -39,6 +39,7 @@ window.__ModuleLoader__.load({
       const [description, setDescription] = useState(initial?.description ?? '')
       const [location, setLocation] = useState(initial?.location ?? '')
       const [lock, setLock] = useState(initial?.lock ?? false)
+      const [lead, setLead] = useState(() => leadToSelect(initial?.remindLead))
       const [error, setError] = useState(null)
       const [conflicts, setConflicts] = useState(null)
       const [confirming, setConfirming] = useState(false)
@@ -55,6 +56,7 @@ window.__ModuleLoader__.load({
           description,
           location: location.trim() === '' ? null : location,
           lock,
+          remindLead: lead === '' ? null : Number(lead),
           start: zoneLocal(start),
           end: zoneLocal(end),
         }
@@ -83,6 +85,7 @@ window.__ModuleLoader__.load({
                 description: initial.description,
                 location: initial.location ?? null,
                 lock: initial.lock ?? false,
+                remindLead: initial.remindLead ?? null,
                 start: initial.start,
                 end: initial.end,
               }
@@ -120,10 +123,11 @@ window.__ModuleLoader__.load({
                   lock: initial.lock ?? false,
                   start: initial.start,
                   end: initial.end,
-                  ...(initial.taskId !== undefined ? { taskId: initial.taskId } : {}),
-                  ...(initial.allDay !== undefined ? { allDay: initial.allDay } : {}),
-                  ...(initial.source !== undefined ? { source: initial.source } : {}),
-                  ...(initial.sourceKey !== undefined ? { sourceKey: initial.sourceKey } : {}),
+                ...(initial.taskId !== undefined ? { taskId: initial.taskId } : {}),
+                ...(initial.allDay !== undefined ? { allDay: initial.allDay } : {}),
+                ...(initial.source !== undefined ? { source: initial.source } : {}),
+                ...(initial.sourceKey !== undefined ? { sourceKey: initial.sourceKey } : {}),
+                ...(initial.remindLead !== undefined ? { remindLead: initial.remindLead } : {}),
                 }]))[0], { allowConflicts: true })
                 liveId = created.id
                 await refresh()
@@ -174,6 +178,7 @@ window.__ModuleLoader__.load({
               })),
               h(CategoryPreview, { category: categoryId(category, categories), categories, title }),
                entryDetails({ t, location, setLocation, lock, setLock }),
+              h(RemindLeadField, { t, lead, setLead }),
               field(t('entry.description'), h('textarea', {
                 className: 'bsch-textarea', value: description, rows: 2,
                 onChange: e => setDescription(e.target.value),
@@ -210,6 +215,36 @@ window.__ModuleLoader__.load({
         }, h('span', { className: 'bsch-switch-track', 'aria-hidden': true },
           h('span', { className: 'bsch-switch-thumb' })), t('entry.lock')))
     }
+
+    // -- per-row reminder override (docs/14 §4): '' follows the global tiers --
+    const REMIND_PRESETS = [0, 15, 30, 60, 120, 1440, 2880]
+
+    const labelForLead = (t, minutes) => {
+      if (minutes === 0) return t('remind.atTime')
+      if (minutes % 1440 === 0) return t('remind.daysBefore').replace('{n}', String(minutes / 1440))
+      return t('remind.minutesBefore').replace('{n}', String(minutes))
+    }
+
+    /** Preset options plus the current value when it is off-menu (agent-set). */
+    function leadOptions(t, current) {
+      const values = [...REMIND_PRESETS]
+      if (current !== null && current !== undefined && !values.includes(current)) values.push(current)
+      values.sort((a, b) => a - b)
+      return [
+        { value: '', label: t('remind.default') },
+        ...values.map(value => ({ value: String(value), label: labelForLead(t, value) })),
+      ]
+    }
+
+    function RemindLeadField({ t, lead, setLead }) {
+      return field(t('remind.lead'), h('select', {
+        className: 'bsch-select', value: lead,
+        onChange: event => setLead(event.target.value),
+      }, leadOptions(t, lead === '' ? null : Number(lead)).map(option =>
+        h('option', { key: option.value, value: option.value }, option.label))))
+    }
+
+    const leadToSelect = lead => (lead === null || lead === undefined ? '' : String(lead))
 
     /** `datetime-local` values are browser-local wall times; emit them
      *  with the browser's explicit offset so the wire format is honest. */
@@ -376,6 +411,6 @@ window.__ModuleLoader__.load({
             }, busy ? t('batch.creating') : t('batch.create')))))
     }
 
-    return { EventEditor, BatchEditor, zoneLocal, toLocalInput }
+    return { EventEditor, BatchEditor, zoneLocal, toLocalInput, RemindLeadField, leadToSelect }
   },
 })

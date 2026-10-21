@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { deriveScheduleReminders, ENTRY_WINDOW_MS } from '../host/schedule-reminders.js'
+import { attachReminders } from '../host/reminders.js'
 
 const NOW = Date.parse('2026-10-21T08:00:00+08:00')
 const iso = offset => new Date(NOW + offset * 60_000).toISOString()
@@ -36,4 +37,31 @@ test('all-day entries preserve their flag and malformed starts stay silent', () 
 test('past reminder windows stay silent and scan horizon covers exam lead', () => {
   assert.deepEqual(derive([entry({ start: iso(10) })]), [])
   assert.ok(ENTRY_WINDOW_MS >= 2 * 1440 * 60_000)
+})
+
+test('entry remindLead overrides both tier defaults, null falls back', () => {
+  const [out] = derive([entry({ remindLead: 120, start: iso(300), end: iso(360) })])
+  assert.equal(Date.parse(out.at), Date.parse(iso(300)) - 120 * 60_000)
+  const [exam] = derive([entry({ category: 'exam', remindLead: 0, start: iso(2880) })])
+  assert.equal(Date.parse(exam.at), Date.parse(iso(2880)))
+  const [fallback] = derive([entry({ remindLead: null, start: iso(300), end: iso(360) })])
+  assert.equal(Date.parse(fallback.at), Date.parse(iso(300)) - 15 * 60_000)
+})
+
+test('task remindLead overrides the config tier while unset rows keep it', () => {
+  const service = {
+    listTasks: () => [
+      { id: 't1', title: '作业', taskType: 'homework', due: iso(2880), remindLead: 120 },
+      { id: 't2', title: '考试', taskType: 'exam', due: iso(2880) },
+    ],
+    listEntries: () => [],
+    upcomingReminders: () => [],
+  }
+  attachReminders({ logger: { info() {} } }, service, {
+    remindersEnabled: true, homeworkLeadMinutes: 30, examLeadMinutes: 1440,
+    otherLeadMinutes: 30, eventLeadMinutes: 15,
+  })
+  const rows = service.upcomingReminders()
+  assert.equal(Date.parse(rows.find(row => row.key === 't1').at), Date.parse(iso(2880)) - 120 * 60_000)
+  assert.equal(Date.parse(rows.find(row => row.key === 't2').at), Date.parse(iso(2880)) - 1440 * 60_000)
 })

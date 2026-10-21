@@ -3,6 +3,11 @@ export const ISO_DATETIME_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?
 export const SOURCE_ID_RE = /^[a-z][a-z0-9_-]*$/
 export const TASK_TYPES = ['homework', 'exam', 'lecture', 'other']
 export const PRIORITIES = ['high', 'medium', 'low']
+/**
+ * Per-row reminder override ceiling (minutes). 7 days keeps entry overrides
+ * inside the derivation window (8 days) so the moment always fires.
+ */
+export const REMIND_LEAD_MAX_MINUTES = 10080
 export const DEFAULT_CATEGORIES = Object.freeze([
   { id: 'course', name: '课程', color: '#3B82F6' },
   { id: 'homework', name: '作业', color: '#F59E0B' },

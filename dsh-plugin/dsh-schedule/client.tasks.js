@@ -9,7 +9,7 @@ window.__ModuleLoader__.load({
     const { React, h, field } = core
     const { useState, useMemo } = React
     const { Modal, ConfirmDialog } = core
-    const { toLocalInput, zoneLocal } = require('@lidozs55/dsh-schedule/client.editors.js')
+    const { toLocalInput, zoneLocal, RemindLeadField, leadToSelect } = require('@lidozs55/dsh-schedule/client.editors.js')
 
     const TYPES = ['homework', 'exam', 'lecture', 'other']
     const PRIORITIES = ['high', 'medium', 'low']
@@ -50,13 +50,14 @@ window.__ModuleLoader__.load({
         return toLocalInput(endOfToday)
       })
       const [description, setDescription] = useState(initial?.description ?? '')
+      const [lead, setLead] = useState(() => leadToSelect(initial?.remindLead))
       const [error, setError] = useState(null)
       const [confirming, setConfirming] = useState(false)
 
       const save = async () => {
         setError(null)
         try {
-          const input = { title, taskType, priority, description, due: zoneLocal(due) }
+          const input = { title, taskType, priority, description, due: zoneLocal(due), remindLead: lead === '' ? null : Number(lead) }
           const saved = initial === null
             ? await api.createTask(input)
             : await api.updateTask(initial.id, input)
@@ -97,6 +98,7 @@ window.__ModuleLoader__.load({
           className: 'bsch-select', value: priority,
           onChange: e => setPriority(e.target.value),
         }, PRIORITIES.map(level => h('option', { key: level, value: level }, t('prio.' + level))))),
+        h(RemindLeadField, { t, lead, setLead }),
         field(t('task.description'), h('textarea', {
           className: 'bsch-textarea', value: description, rows: 2,
           onChange: e => setDescription(e.target.value),
