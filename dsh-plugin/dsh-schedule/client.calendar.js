@@ -20,6 +20,16 @@ window.__ModuleLoader__.load({
 
     const DAY_MS = 86_400_000
     const DAY_KEY_RE = /^\d{4}-\d{2}-\d{2}$/
+    const VIEW_MODE_KEY = 'dsh-schedule:view-mode'
+
+    /** Day view on phone-width screens unless the user has chosen (docs/14 §3). */
+    const initialViewMode = () => {
+      try {
+        const stored = window.localStorage.getItem(VIEW_MODE_KEY)
+        if (stored === 'day' || stored === 'week') return stored
+      } catch { /* storage unavailable */ }
+      return window.matchMedia?.('(max-width: 640px)').matches ? 'day' : 'week'
+    }
 
     // -- quick-jump mini calendar (legacy 快速跳转小日历) ----------------------
     const MC_WEEKDAYS = ['日', '一', '二', '三', '四', '五', '六']
@@ -109,9 +119,11 @@ window.__ModuleLoader__.load({
     }
 
     /** The week-range badge doubles as the quick-jump trigger (R10-1). */
-    function QuickJump({ t, api, weekStart, onJump, categories }) {
+    function QuickJump({ t, api, weekStart, dayCount, onJump, categories }) {
       const [open, setOpen] = useState(false)
-      const range = `${weekStart.slice(5)} ~ ${addDays(weekStart, 6).slice(5)}`
+      const range = dayCount === 1
+        ? weekStart.slice(5)
+        : `${weekStart.slice(5)} ~ ${addDays(weekStart, 6).slice(5)}`
       return h('div', { className: 'bsch-popanchor' },
         h('button', {
           className: `bsch-badge bsch-badge-btn${open ? ' is-active' : ''}`,
@@ -146,6 +158,13 @@ window.__ModuleLoader__.load({
 
     function ScheduleTab(props) {
       const { t, api, timer, refresh, data, undoApi, weekStart, setWeekStart } = props
+      const [viewMode, setViewMode] = useState(initialViewMode)
+      const dayCount = viewMode === 'day' ? 1 : 7
+      const step = viewMode === 'day' ? 1 : 7
+      const switchMode = mode => {
+        setViewMode(mode)
+        try { window.localStorage.setItem(VIEW_MODE_KEY, mode) } catch { /* ignore */ }
+      }
       const weekly = useScheduleData(api, timer, weekStart)
       // Hold the previous week on screen until the target week's snapshot
       // has landed (user report 2026-10-20): everything below renders ONE
@@ -263,10 +282,24 @@ window.__ModuleLoader__.load({
 
       return h('div', { className: 'bsch-body' },
         h('div', { className: 'bsch-toolbar' },
-          h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, -7)) }, '‹'),
-          h('button', { className: 'bsch-btn', onClick: () => setWeekStart(addDays(weekStart, 7)) }, '›'),
+          h('button', {
+            className: 'bsch-btn', title: t(viewMode === 'day' ? 'toolbar.prevDay' : 'toolbar.prev'),
+            onClick: () => setWeekStart(addDays(weekStart, -step)),
+          }, '‹'),
+          h('button', {
+            className: 'bsch-btn', title: t(viewMode === 'day' ? 'toolbar.nextDay' : 'toolbar.next'),
+            onClick: () => setWeekStart(addDays(weekStart, step)),
+          }, '›'),
           h('button', { className: 'bsch-btn', onClick: () => setWeekStart(grid.anchorToday()) }, t('toolbar.today')),
-          h(QuickJump, { t, api, categories, weekStart: viewWeek, onJump: day => setWeekStart(day) }),
+          h('button', {
+            className: `bsch-btn${viewMode === 'day' ? ' is-active' : ''}`,
+            onClick: () => switchMode('day'), title: t('toolbar.dayView'),
+          }, t('toolbar.day')),
+          h('button', {
+            className: `bsch-btn${viewMode === 'week' ? ' is-active' : ''}`,
+            onClick: () => switchMode('week'), title: t('toolbar.weekView'),
+          }, t('toolbar.week')),
+          h(QuickJump, { t, api, categories, weekStart: viewWeek, dayCount, onJump: day => setWeekStart(day) }),
           snapshot?.termWeek != null
             ? h('span', { className: 'bsch-badge' }, `${t('week.prefix')} ${snapshot.termWeek} ${t('week.suffix')}`.trim())
             : h('span', { className: 'bsch-badge' }, t('week.unknown')),
@@ -288,6 +321,7 @@ window.__ModuleLoader__.load({
           : h('div', { style: { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' } },
               h(WeekGrid, {
                 t, timer, weekStart: viewWeek, today: snapshot?.today,
+                dayCount,
                 entries: snapshot?.entries ?? [],
                 categories,
                 completedTaskIds: completedIds,

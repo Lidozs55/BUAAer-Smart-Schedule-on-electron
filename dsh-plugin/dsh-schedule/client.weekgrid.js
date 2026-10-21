@@ -111,13 +111,16 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * @param {object} props - `{ t, timer, weekStart, entries,
+     * @param {object} props - `{ t, timer, weekStart, dayCount, entries,
      *   completedTaskIds, onEditEntry, onCreateAt, onMoveItems,
      *   onDeleteEntries, onJumpTo }` — move/delete take one item or many
      *   through the same single props (the host API is natively multi-item).
+     *   `dayCount` narrows the window (1 = phone day view, docs/14 §3);
+     *   default 7. The anchor steps by the caller.
      */
     function WeekGrid(props) {
       const { t, timer, weekStart, entries, completedTaskIds } = props
+      const dayCount = props.dayCount ?? 7
       // `pendingMove` is the optimistic time override shown from the moment
       // the pointer is released until the refreshed snapshot arrives. Without
       // it the block snapped back to its old slot for one or two frames
@@ -278,7 +281,7 @@ window.__ModuleLoader__.load({
       }, [selected, entriesById, props.onDeleteEntries])
 
       const days = useMemo(() =>
-        Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)), [weekStart])
+        Array.from({ length: dayCount }, (_, i) => addDays(weekStart, i)), [weekStart, dayCount])
 
       const nowDay = gridDay(now)
       const nowMin = relMinutes(now)
@@ -412,7 +415,7 @@ window.__ModuleLoader__.load({
           cancelLongPressOnMove(moveEvent)
           const deltaMin = snapDelta(moveEvent.clientY - originY)
           const dayShift = dayAt(moveEvent.clientX) - dayIndex
-          const day = Math.min(Math.max(start.day + dayShift, 0), 6)
+          const day = Math.min(Math.max(start.day + dayShift, 0), dayCount - 1)
           const startMin = clampToDay(start.startMin + deltaMin)
           const span = start.endMin - start.startMin
           setGhost(current => current === null ? current
@@ -723,12 +726,22 @@ window.__ModuleLoader__.load({
           ? h(GhostBlock, { ghost, t })
           : null))
 
+      // A narrowed window (phone day view) overrides the 7-column template.
+      const gridColumns = dayCount === 7 ? undefined
+        : `34px repeat(${dayCount}, minmax(120px, 1fr))`
+
       return h('div', { className: 'bsch-gridwrap' },
-        h('div', { className: 'bsch-grid-head' }, h('div', null), headCells),
+        h('div', {
+          className: 'bsch-grid-head',
+          ...(gridColumns !== undefined ? { style: { gridTemplateColumns: gridColumns } } : {}),
+        }, h('div', null), headCells),
         h('div', {
           className: 'bsch-grid',
           ref: gridRef,
-          style: { height: `${GRID_HEIGHT}px` },
+          style: {
+            height: `${GRID_HEIGHT}px`,
+            ...(gridColumns !== undefined ? { gridTemplateColumns: gridColumns } : {}),
+          },
           onPointerDown: onGridPointerDown,
           onDoubleClick: onGridDblClick,
           onContextMenu: onGridContextMenu,
