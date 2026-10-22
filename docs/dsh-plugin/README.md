@@ -22,7 +22,7 @@
 | `02-host-api.md` | 怎么用 `cordis_inspect_query` 查证；`inject` vs `ctx.get`；Host 服务速查；事件与五种分发模式；`Config` 写法 | 写 Host 代码前；查签名时 |
 | `03-client-ui.md` | Client 半的清单与产物格式；槽位与组件 props；主题 token 与样式规范；i18n；Client→Host 调用路径 | 写任何 UI 前 |
 | `04-data-and-state.md` | 数据放哪里（Session 投影 / 存储 domain / 凭据 / 配置 / 文件）；domain 声明与使用契约 | 设计数据结构时 |
-| `05-time-and-background.md` | `ctx.timer` / `ctx.jobs` / `ctx.schedule` / 人类命令；提醒与长任务怎么做 | 做提醒、同步、后台任务时 |
+| `05-time-and-background.md` | `ctx.timer` / `ctx.jobs` / 人类命令；提醒与长任务怎么做 | 做提醒、同步、后台任务时 |
 | `06-tool-and-agent.md` | `schedule` CLI 命令注册表与回执契约；`defineTool` / `ToolDefinition` 平台参考；“一个操作两个调用者”；扩展点强弱；反模式 | 要暴露能力给 Agent 时 |
 | `08-workflow-and-verification.md` | 开发循环（含 scratch web 宿主）、自检清单、安装与返回值语义、验收清单、排查表、禁忌汇总 | 每次交付前 |
 | `09-vivarium-bridge.md` | 桌宠桥 `@lidozs55/dsh-schedule-bridge`（已落地设计 v2）：职责边界、提醒气泡（任务/条目）/任务状态上报、接口契约、延后项 | 动桥插件 / 提醒对外表面时 |

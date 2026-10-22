@@ -69,7 +69,7 @@ get(name: string): DomainImpl | undefined
 async closeAll(): Promise<void>
 ```
 
-### 2.3 `ctx.timer` / `ctx.jobs` / `ctx.schedule` / `ctx.commands` — 时间与人工入口（详见 `05`）
+### 2.3 `ctx.timer` / `ctx.jobs` / `ctx.commands` — 时间与人工入口（详见 `05`）
 
 ```ts
 // ctx.timer（混入 context 的助手，返回值即清理函数）
@@ -91,14 +91,6 @@ kill(id: JobId, caller?: SessionId, reason?: string): 'requested' | 'already-fin
 wait(id: JobId, timeoutMs: number, caller?: SessionId, signal?: AbortSignal): Promise<JobView>
 remove(id: JobId, caller?: SessionId): void
 attachController(name: string): () => void
-
-// ctx.schedule（可选能力！）
-async create(sessionId: SessionId, request: ScheduleCreateRequest, signal?: AbortSignal): Promise<ScheduleRecord>
-@Remote('list') async list(request: ScheduleListRequest): Promise<ScheduleRecord[]>
-@Remote('catalog') async catalog(): Promise<ScheduleCatalogEntry[]>
-@Remote('history') async history(request: ScheduleDeliveryHistoryRequest): Promise<ScheduleDeliveryHistoryResult>
-@Remote('delete') async delete(request: ScheduleDeleteRequest, signal?: AbortSignal): Promise<ScheduleDeleteResult>
-@Remote('update') async update(request: ScheduleUpdateRequest, signal?: AbortSignal): Promise<ScheduleUpdateResult>
 
 // ctx.commands
 register(definition: CommandDefinition): () => void
@@ -250,7 +242,7 @@ stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 |---|---|---|
 | `ctx.agents` | 找到当前/根 agent，驱动一轮输入 | `currentInitiator()`、`requireInitiator()`、`get(id)`、`list()`、`roots()`、`async create(options)`、`async resume(options)` |
 | `ctx.sessionProjections` | 会话日志派生状态（见 `04`） | `register(definition)`、`onChanged(listener)`、`stateOf(session, key)`、`snapshot(session, keys?)` |
-| `ctx.sessionController` | 由 sessionId 解析出 Agent（提醒投递用它） | `resolveAgent(sessionId)`、`inspect(sessionId, signal?)` |
+| `ctx.sessionController` | 由 sessionId 解析出 Agent | `resolveAgent(sessionId)`、`inspect(sessionId, signal?)` |
 | `ctx.approval` | 审批策略与请求 | `setPolicy(agent, policy)`、`async request(req)` |
 | `ctx.web` | 出网搜索/抓取能力 | `async search(request, signal?)`、`async fetch(request, signal?)` |
 | `ctx.jobController` | 作业的浏览器侧 Remote 面 | `@Remote({mode:'stream'}) list/follow`、`@Remote('kill') kill` |
@@ -287,7 +279,6 @@ stream(options: GenerateOptions): AsyncIterable<StreamChunk>
 | `tools/execute` | waterfall | `(this, exec, next)` | 包裹分派：超时、重试、指标。**只能替换 `exec.signal`**，且必须还原 |
 | `tools/post-execute` | waterfall | `(this, exec, result, next)` | 显式变换结果；不要在这里做授权判断 |
 | `tools/change` | emit | `(): void` | 工具集合变化（**故意不做 scope 过滤**） |
-| `schedule/changed` | emit | `(): void` | 持久提醒集合变化，客户端重新拉目录 |
 | `settings/document-updated` | emit | `(ns, revision): void` | 某 profile 条目的表单值/可用性/页面策略变化 |
 | `plugin-manager/changed` | emit | `(change: PluginChange): void` | 插件/组合包/组合变化。**注意**：CLI 或手工改文件后由 HMR 应用的补丁不会在这里宣告 |
 | `system-prompt/assemble` | waterfall | `(this: Scoped<SystemPrompt>, assembly, context, next)` | 专家级整体装配，返回结果权威。**不要用它增删工具/提示** |
@@ -367,8 +358,7 @@ export function apply(ctx: Context, config: ReturnType<typeof Config>) {
 
 ---
 
-## 5. 与本项目最相关的三个"别忘了"
+## 5. 与本项目最相关的两个"别忘了"
 
-1. **`ctx.schedule` 是可选的**（官方 Web profile 默认不含，要启用"自动化任务"bundle）。任何依赖它的代码都要走 `ctx.get('schedule')` + 判空。
-2. **`ctx.jobs` 不跨重启**（进程本地注册表；包 README 原话："Jobs end when their owner or the harness shuts down."）。要持久就用 `ctx.schedule` 或 storage domain。
-3. **派生状态用 `ctx.sessionProjections`**，不要在 `session/event` 里重扫日志（见 `04`）。
+1. **`ctx.jobs` 不跨重启**（进程本地注册表；包 README 原话："Jobs end when their owner or the harness shuts down."）。要持久就用 storage domain。
+2. **派生状态用 `ctx.sessionProjections`**，不要在 `session/event` 里重扫日志（见 `04`）。

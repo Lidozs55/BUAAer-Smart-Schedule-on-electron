@@ -40,7 +40,7 @@ dsh-plugin/dsh-schedule/
 │   ├── api.js            # /api/schedule-core 客户端数据通道
 │   ├── import.js         # 本插件 export 格式的回灌
 │   ├── schedule-reminders.js  # 条目提醒时刻派生（纯函数，§4.4）
-│   └── reminders.js      # 提醒派生（无状态、无会话投递，§4.4）
+│   └── reminders.js      # 提醒派生（按 Config 提前量现算，§4.4）
 ├── client.js             # Client 入口：依赖序装载分块 + 槽位注册（§6.2）
 └── client.*.js           # 分块：core/notify/gridmath/weekgrid/editors/tasks/calendar/clipboard/settings/style
 ```
@@ -170,9 +170,9 @@ global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
 | 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
 | 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；命令扩展点用同一个 `ctx.provide('scheduleCommands', registry)`；桥走 `inject: ['scheduleCore']` |
 | Agent 传输 | 认证 loopback HTTP（随机端口 + bearer token + Host 校验），CLI 只转发注册命令树；不开放任意 service/route，也不让 CLI 直接打开数据库 |
-| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`（条目/任务的非空 `remindLead` 优先），条目带 `kind: 'task'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
+| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`（条目/任务的非空 `remindLead` 优先），条目带 `kind: 'task'|'entry'` 与确定性 `key`。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。派生结果按 `key@at` 去重 |
 | 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（所有普通条目统一参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（CLI `--allow-conflicts` / UI 确认框）放行 |
-| "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示；提醒子系统不依赖它 |
+| "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示 |
 
 ### 4.3 Host 的 inject 声明（重要权衡）
 
@@ -185,8 +185,6 @@ export const inject = ['storageDomain', 'connection', 'systemPrompt']
 - **为什么**：`ctx.get()` 是即时查找、无激活顺序保证——本包先于 `connection` 激活时 get 返回 undefined，静默降级导致 `/api` 路由从未注册（2026-10-17 实测 404 事故）。必需 inject 让 cordis park 到提供者激活为止，是唯一确定性契约。
 - 代价（已知限制）：profile 里缺任一提供者时**整个核心插件不激活**。web/desktop 部署的
   base + web-app bundle 恒提供这三个，所以当前可接受。
-- `schedule`/`sessionController` **不再是依赖**：提醒不经过 Session，核心在未启用「自动化任务」
-  bundle 的 profile 上也能正常激活。`if (ctx.get(…))` 守卫保留为防御性兜底。
 - `ctx.timer` 是混入 context 的助手，不需要 inject；`client.js` 已声明客户端侧的 `timer`。
 - CLI 传输层不消费任何宿主服务：`startScheduleCliServer` 只用 `ctx.logger`（可选）。
 
@@ -200,15 +198,13 @@ export const inject = ['storageDomain', 'connection', 'systemPrompt']
 
 `attachReminders(ctx, service, config)`：Config 提供 `remindersEnabled` 与任务作业/考试/其他提前量、条目 `eventLeadMinutes`（考试条目走考试档）。`service.upcomingReminders()` 只有 `kind: 'task'|'entry'` 与确定性 `key`：任务按截止派生，条目由 `host/schedule-reminders.js` 按开始时间派生并携带 `location`。
 
-**提醒是纯派生，不是 Agent 任务**：不写 `ctx.schedule`、不建 Session、不触发 LLM 轮次、无持久状态。
-投递面只有两个，都读同一派生集：
+投递面有两个，都读同一派生集：
 
 - `client.notify.js`：页面打开时每 30s 轮询 `GET /api/schedule-core?view=reminders`，在 `at−60s`
   窗口内用 Web Notification 呈现（未授权/前台时退化为页面内 toast），按 `key@at` 去重；
-- 桌宠桥：`ctx.vivarium.notices.post` 气泡（可选增强，核心不依赖）。
+- 桌宠桥：`ctx.vivarium.notices.post` 气泡（可选增强）。
 
-`remindersEnabled: false` 时派生集为空，页面通知与桌宠气泡同步静默（策略一致性）。页面关闭后
-轮询停止，这是 Web Notification 方案的固有限制；装了桌宠桥时气泡可独立于页面运行。
+`remindersEnabled: false` 时派生集为空。页面通知随页面生命周期，桌宠桥可独立运行。
 
 ---
 
@@ -298,7 +294,6 @@ gacha-calendar 服务（B 站采集/解析/推算在服务端）的格式化结�
 - 无参命令**整个省略 `input`**（`input: { hint: '' }` 抛 "input hint must not be empty"）。
 - API 查询参数做 nullish 与格式校验（双端），防止 `"undefined"` 字符串污染快照字段（2026-10-18 aN-NaN 事故链）。
 - CSS shell 使用 `--dsw-*` token；唯一业务配色例外为配置类别的 `#RRGGBB` accent；圆角/阴影走 token 刻度；locale zh/en 双语强制。
-- 提醒子系统不依赖 `schedule`/`sessionController`；通知面见 §4.4 与 `client.notify.js`。
 
 ---
 

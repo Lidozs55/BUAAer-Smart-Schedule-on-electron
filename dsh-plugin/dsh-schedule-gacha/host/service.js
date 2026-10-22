@@ -528,9 +528,9 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
   ].join('\n')
 
   /**
-   * Register (or remove) the durable weekly check. `ctx.schedule` is an
-   * optional bundle; without it the six-hour HTTP refresh still works and the
-   * command reports the degraded mode instead of failing.
+   * Register (or remove) the durable weekly check via the platform
+   * automation-task bundle. The six-hour HTTP refresh stays available, and the
+   * command reports degraded mode when the bundle is absent.
    */
   async function setWatch(sessionId, { enabled = true } = {}) {
     const schedule = typeof ctx.get === 'function' ? ctx.get('schedule') : undefined

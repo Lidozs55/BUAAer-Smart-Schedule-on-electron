@@ -13,22 +13,21 @@
 
 | 插件 | 拥有 | 不拥有 |
 |---|---|---|
-| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、`schedule` CLI、UI 面板、提醒子系统(提前量 Config、无状态 `upcomingReminders()` 派生集、页面 30s 轮询 + Web Notification/toast) | 桌宠概念;任何学校/导入来源;Agent 会话投递 |
+| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、`schedule` CLI、UI 面板、提醒子系统(提前量 Config、无状态 `upcomingReminders()` 派生集、页面 30s 轮询 + Web Notification/toast) | 桌宠概念;任何学校/导入来源 |
 | 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、整学期教务导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
 | 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(任务含「已完成」快捷动作,条目仅「知道了」)、任务状态上报(基座 `tasks` 状态面) | 数据副本;提醒策略与时序真相;宠物语义(逾期担忧/清空庆祝的推导归基座);UI |
 
 提醒的时序真相只有一个:核心 `service.upcomingReminders()` 纯派生,任务/条目两类同权。
 投递表面可以有多个,都读同一派生集:**页面通知**(核心 `client.notify.js`,30s 轮询 + Web
-Notification/页面内 toast)和**桌宠气泡**(桥,可选增强)。两者都不写 `ctx.schedule`、不建
-Agent 会话、不触发 LLM 轮次。桥 `inject: ['scheduleCore', 'vivarium']`,任一缺席则 cordis 把桥
-park 掉,核心插件无感;来源适配器同理:`inject: ['scheduleCore', ...]`,卸载北航插件不影响
+Notification/页面内 toast)和**桌宠气泡**(桥,可选增强)。桥
+`inject: ['scheduleCore', 'vivarium']`,任一缺席则 cordis 把桥 park 掉,核心插件无感;来源适配器同理:`inject: ['scheduleCore', ...]`,卸载北航插件不影响
 已有任务/条目与提醒。
 
 ## 2. v2 两条联动(已实现)
 
 ### 2.1 提醒气泡(notice)
 
-核心插件派生「提醒时刻」集合，只有任务与条目两类；教学安排、考试、会议都由普通条目路径派生，地点统一 `location`。考试条目走考试提前量，其他条目走 `eventLeadMinutes`；提前量只存核心 Config 一处。提醒不写 `ctx.schedule`、不建 Agent 会话。
+核心插件派生「提醒时刻」集合，只有任务与条目两类；教学安排、考试、会议都由普通条目路径派生，地点统一 `location`。考试条目走考试提前量，其他条目走 `eventLeadMinutes`；提前量只存核心 Config 一处。
 桥每 60s 读 `service.upcomingReminders()`（`kind: 'task'|'entry'` 与确定性 `key`），提醒时刻进入投递窗口即 `ctx.vivarium.notices.post`：
 
 - `id = sched-rem-<key>`（任务键 `<taskId>`，条目键 `entry-<id>`）；重复 post 由 broker 去重。
@@ -37,9 +36,7 @@ park 掉,核心插件无感;来源适配器同理:`inject: ['scheduleCore', ...]
 - 用户点了哪个动作,broker 的 `settled(id)` Promise 就以该 action id 结算。
 
 窗口语义说明:派生集只含未来时刻,一旦过点即从集合消失;60s 提前量 = 至多早一分钟弹出、
-绝不漏发。核心 Config 关闭提醒时派生集为空,气泡与页面通知同步静默(策略一致性)。核心
-不再依赖 `schedule`/`sessionController`(00 §4.3),所以未启用「自动化任务」bundle 的 profile
-上桥照样工作;桥缺席时,核心页面的 `client.notify.js` 仍独立投递 Web Notification/toast。
+绝不漏发。核心 Config 关闭提醒时派生集为空,气泡与页面通知同步静默(策略一致性)。
 
 ### 2.2 任务状态上报(基座 §4c `tasks.report`,2026-10-21 重构)
 

@@ -70,8 +70,8 @@ export async function apply(ctx, config) {
     }
   }, 'schedule: cli')
 
-  // Stateless reminder derivation (R2): no storage, no Session, no
-  // `ctx.schedule`; presentation surfaces poll it.
+  // Stateless reminder derivation (R2): presentation surfaces poll the
+  // derived set.
   attachReminders(ctx, service, config)
 
   const systemPrompt = ctx.get('systemPrompt')

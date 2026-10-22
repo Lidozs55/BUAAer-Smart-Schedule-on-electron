@@ -112,7 +112,7 @@ Agent 官方校正是**转发**：`schedule gacha apply-official` 本地校验�
 | `refresh` | `--game <id>`（可省略） | 从服务拉取最新格式化状态（服务自身另每 6 h 采集一次） |
 | `posts` | `--game <id>`、`--page`、`--page-size`、`--type` | 分页读取服务保存的原始公告/动态/视频（标题、UTC 发布时间、原文入口），供核对 |
 | `apply-official` | `--game <id>` + `--update-start` / `--preview-start`（`+08:00` ISO）+ 可选 `--update-end`、`--preview-end`、`--version`、`--note` | 校验后转发到服务覆盖层；`--clear` 清除覆盖回到公告规则 |
-| `watch` | `--session <id>`（开启）；`--no-enabled` 取消（无需会话 id） | 用 `ctx.schedule` 登记/取消每周三 10:00 的 Agent 核对 |
+| `watch` | `--session <id>`（开启）；`--no-enabled` 取消（无需会话 id） | 用平台「自动化任务」能力登记/取消每周三 10:00 的 Agent 核对 |
 
 覆盖层规则：
 
@@ -120,8 +120,8 @@ Agent 官方校正是**转发**：`schedule gacha apply-official` 本地校验�
 - 只写一个时间也可以：另一个沿用规则；维护结束时间缺省按游戏惯例窗口补。更新覆盖只更新来源状态/卡片，前瞻覆盖才影响主日程条目。
 - 校验：`update_end > update_start`、`preview_end > preview_start`、`preview_start < update_start`。
 
-`watch` 依赖可选的 `ctx.schedule` bundle：缺失时命令返回降级说明，6 小时后台刷新照常，
-`needsRefresh()` 也照常工作。周检 prompt 明确要求先 `list`、再逛官方账号、最后按游戏写回。
+`watch` 使用平台「自动化任务」能力；未启用时命令返回降级说明，6 小时后台刷新与
+`needsRefresh()` 照常工作。周检 prompt 明确要求先 `list`、再逛官方账号、最后按游戏写回。
 会话 id 来自 `--session`、`SCHEDULE_SESSION_ID` 或 `DSH_SESSION_ID`；设置卡生成的 prompt 会注入实际 session id。
 
 `index.js` 给 `systemPrompt` 注入来源说明；查公告与官方时间写回优先使用 `schedule gacha`，
