@@ -42,10 +42,12 @@ test('Main skill is a minimal CLI discovery entry, not a tool manual', async () 
   assert.match(skill, /guide/)
   assert.doesNotMatch(skill, forbidden)
   assert.doesNotMatch(skill, /sourceKey|sourceState|storageDomain|\/api\/|D:\\|AppData|dsh-plugin\//)
-  for (const term of ['schedule --help', '--allow-conflicts', '--input', 'guide', 'JSON 回执', '真实 `id`', '读取/搜索宿主内部存储']) {
+  for (const term of ['schedule --help', 'guide', '真实 `id`', '读取或搜索宿主内部存储', '--lock', '某日起可查询', '不要额外创建任务']) {
     assert.ok(skill.includes(term), term)
   }
-  // The old per-operation manual moved into layered --help and guides.
+  // Command mechanics stay in the leaf help/guides; the skill only carries
+  // discovery plus cross-command safety rules.
+  assert.doesNotMatch(skill, /--allow-conflicts|--input|JSON 回执/)
   assert.doesNotMatch(skill, /sched_task|sched_entry|buaa_course_sync|gacha_schedule/)
   const index = await read('dsh-plugin/dsh-schedule/index.js')
   assert.doesNotMatch(index.slice(index.indexOf('const systemPrompt')), forbidden)

@@ -102,7 +102,7 @@ const ENTRY_CREATE_OPTIONS = {
   location: { type: 'string', description: '地点；更新时传空字符串表示清除' },
   lock: {
     type: 'boolean',
-    description: '只禁止页面快捷拖动/缩放，默认 false；不限制更新、编辑或删除',
+    description: '只禁止页面快捷拖动/缩放，默认 false；外部通知已确定时间的课程/考试/竞赛/预约建议加 --lock，可调整计划默认不加',
   },
   'all-day': {
     type: 'boolean',
@@ -423,10 +423,10 @@ export function registerCoreCommands(registry, service) {
       '一、先选对象',
       '- 有起止时间、占用日历：用 `schedule entry`。',
       '- 只有截止时间、需要标记完成：用 `schedule task`。',
-      '- 一场考试/讲座本身是条目，不自动再建任务；只有另有明确待办时才建任务。两者都建时分别写入、分别报告。',
+      '- 一场考试/讲座本身是条目，不自动再建任务；只有另有明确待办时才建任务。用户未要求时也不要自定提醒提前量或优先级；两者都建时分别写入、分别报告。',
       '',
       '二、最短执行路径',
-      '1. 从用户内容提取目标、日期时间与地点；只问影响正确写入且无法从上下文确定的缺失信息，不猜日期、截止时刻或活动时长。',
+      '1. 从用户内容提取目标、日期时间与地点；只问影响正确写入且无法从上下文确定的缺失信息，不猜日期、截止时刻或活动时长，尤其不要把“某日起可查询/开放”当成截止时间。',
       '2. 修改/删除/完成优先复用本会话回执中的真实 id；否则用 `schedule entry list` / `schedule task list` 定位。同名或多个候选无法唯一匹配时先确认。',
       '3. 需要类别但本会话尚无列表时，用目标窗口的 `schedule entry list` 一次取得 entries/categories/termStart；不需要分类时省略 category，默认 other。',
       '4. 直接写入；不为预判冲突先重复查表。需要去重、查空闲或比较安排时才额外查询。',

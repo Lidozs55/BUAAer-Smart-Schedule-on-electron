@@ -86,7 +86,7 @@ window.__ModuleLoader__.load({
 .bsch-prio.is-medium { background: var(--dsw-alias-state-warn-primary); }
 .bsch-prio.is-low { background: var(--dsw-alias-state-idle-primary); }
 
-.bsch-progress { display: flex; align-items: center; gap: 8px; padding: 8px; }
+.bsch-progress { display: flex; align-items: center; gap: 8px; row-gap: 6px; padding: 8px; flex-wrap: wrap; }
 .bsch-ring { flex: none; }
 .bsch-ring text { fill: var(--dsw-alias-label-secondary); font-size: 10px; }
 

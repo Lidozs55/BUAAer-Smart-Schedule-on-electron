@@ -99,6 +99,12 @@ test('CLI discovers commands and guides, then executes a write and list', async 
     assert.equal(leaf.status, 0)
     assert.match(leaf.stdout, /--allow-conflicts/)
     assert.match(leaf.stdout, /--input/)
+    assert.match(leaf.stdout, /外部通知已确定时间的课程/)
+
+    const workflow = await run(['guide', 'workflow'])
+    assert.equal(workflow.status, 0)
+    assert.match(workflow.stdout, /某日起可查询/)
+    assert.match(workflow.stdout, /不要自定提醒提前量或优先级/)
 
     const created = await run([
       'entry', 'create',

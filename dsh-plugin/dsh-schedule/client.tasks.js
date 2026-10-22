@@ -122,7 +122,8 @@ window.__ModuleLoader__.load({
       const { t, api, refresh, tasks, today } = props
       const [editing, setEditing] = useState(null) // null | {} | task
       const [busyId, setBusyId] = useState(null)
-      const [filter, setFilter] = useState('all') // all | pending | done (P6)
+      const [statusFilter, setStatusFilter] = useState('all') // all | pending | done (P6)
+      const [priorityFilter, setPriorityFilter] = useState('all') // all | high | medium | low
 
       const groups = useMemo(() => {
         const now = Date.now()
@@ -141,9 +142,15 @@ window.__ModuleLoader__.load({
         return buckets
       }, [tasks, today])
 
-      const visible = filter === 'all' ? groups
-        : filter === 'done' ? { ...groups, overdue: [], today: [], week: [], later: [] }
-          : { ...groups, done: [] }
+      const visible = useMemo(() => {
+        const byStatus = statusFilter === 'all' ? groups
+          : statusFilter === 'done' ? { ...groups, overdue: [], today: [], week: [], later: [] }
+            : { ...groups, done: [] }
+        if (priorityFilter === 'all') return byStatus
+        return Object.fromEntries(Object.entries(byStatus).map(([bucket, list]) => [
+          bucket, list.filter(task => task.priority === priorityFilter),
+        ]))
+      }, [groups, statusFilter, priorityFilter])
 
       const pendingCount = groups.overdue.length + groups.today.length + groups.week.length + groups.later.length
 
@@ -183,12 +190,21 @@ window.__ModuleLoader__.load({
           h('span', { className: 'bsch-spacer' }),
           h('select', {
             className: 'bsch-select', style: { width: 'auto' },
-            value: filter, onChange: e => setFilter(e.target.value),
+            value: statusFilter, onChange: e => setStatusFilter(e.target.value),
             'aria-label': t('task.filter'),
           },
             h('option', { value: 'all' }, t('task.all')),
             h('option', { value: 'pending' }, t('task.pending')),
             h('option', { value: 'done' }, t('task.done'))),
+          h('select', {
+            className: 'bsch-select', style: { width: 'auto' },
+            value: priorityFilter, onChange: e => setPriorityFilter(e.target.value),
+            'aria-label': t('task.priority'),
+          },
+            h('option', { value: 'all' }, t('task.allPriorities')),
+            h('option', { value: 'high' }, t('prio.high')),
+            h('option', { value: 'medium' }, t('prio.medium')),
+            h('option', { value: 'low' }, t('prio.low'))),
           h('button', { className: 'bsch-btn is-primary', onClick: () => setEditing({}) },
             `+ ${t('task.create')}`)),
         tasks.length === 0 ? h('div', { className: 'bsch-queue-empty' }, t('task.empty')) : null,

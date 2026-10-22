@@ -265,8 +265,8 @@ gacha-calendar 服务（B 站采集/解析/推算在服务端）的格式化结�
 当前会话 id（`--session`、`SCHEDULE_SESSION_ID` 或 `DSH_SESSION_ID`）来登记自动化周检；`watch --no-enabled` 关闭无需 id。
 
 **Agent 知识入口分层**：核心 `systemPrompt` 只保留当前教学周/起点、`schedule` CLI 入口与安全底线；
-`.dsh/skills/schedule/SKILL.md` 只教如何发现和调用 CLI（帮助分层、guide、回执/冲突语义），
-不复制参数全集。各来源 bundle 只在自身启用时注入自己的 prompt 与 CLI 命名空间：北航负责导入
+`.dsh/skills/schedule/SKILL.md` 只教如何发现 CLI 并保留跨命令行为底线（帮助分层、guide、
+不额外写入、锁定与时间语义），不复制参数、回执或冲突重试细节。各来源 bundle 只在自身启用时注入自己的 prompt 与 CLI 命名空间：北航负责导入
 前提、密码输入和快照回执；二游负责刷新、官方校正和周检。参数以 `schedule <命令> --help` 为准，
 开发文档不作为日常操作前置。职责与验收见 [06 · 工作 Agent 的知识边界](06-tool-and-agent.md#0-工作-agent-的知识边界)。
 
