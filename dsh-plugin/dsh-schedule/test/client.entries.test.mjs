@@ -4,7 +4,7 @@ import test from 'node:test'
 import vm from 'node:vm'
 
 // Execute the browser chunks and their handlers without requiring the host app.
-async function clientHarness() {
+async function clientHarness(fixedNow) {
   const modules = new Map()
   const listeners = new Map()
   let slots = [], cursor = 0, effects = []
@@ -45,7 +45,13 @@ async function clientHarness() {
     removeEventListener: (type, handler) => listeners.get(type)?.delete(handler),
     __ModuleLoader__: { load: ({ id, factory }) => modules.set(id, factory(id => modules.get(id))) },
   }
-  const context = vm.createContext({ window, console, Date, setTimeout, clearTimeout })
+  // A fixed clock lets the display-day tests pin an instant (e.g. 02:00)
+  // without depending on when the suite runs.
+  const DateImpl = fixedNow === undefined ? Date : class extends Date {
+    constructor(...args) { super(...(args.length === 0 ? [fixedNow.getTime()] : args)) }
+    static now() { return fixedNow.getTime() }
+  }
+  const context = vm.createContext({ window, console, Date: DateImpl, setTimeout, clearTimeout })
   for (const file of ['core', 'gridmath', 'editors', 'weekgrid', 'notify']) {
     vm.runInContext(await readFile(new URL(`../client.${file}.js`, import.meta.url), 'utf8'), context)
   }
@@ -190,11 +196,11 @@ test('batch creation exposes shared location and lock controls', async () => {
   assert.ok(inputs.every(row => row.location === 'Gym' && row.lock === true))
 })
 
-async function gridHarness(rows) {
-  const client = await clientHarness()
+async function gridHarness(rows, weekStart = '2026-10-21', fixedNow) {
+  const client = await clientHarness(fixedNow)
   const { WeekGrid } = client.module('weekgrid')
   const moved = [], edited = [], deleted = [], drafts = []
-  const props = { t: key => key, weekStart: '2026-10-21', entries: rows, completedTaskIds: [],
+  const props = { t: key => key, weekStart, entries: rows, completedTaskIds: [],
     onEditEntry: block => edited.push(block.raw), onDeleteEntries: blocks => deleted.push(blocks),
     onMoveItems: async items => { moved.push(items); return {} },
     onCreateAt: (...args) => drafts.push(args), onJumpTo() {},
@@ -216,6 +222,7 @@ async function gridHarness(rows) {
   }
   render()
   return { ...client, moved, edited, deleted, drafts, render,
+    tree: () => tree,
     blocks: () => nodes(tree).filter(node => typeof node.type === 'function' && node.props.block),
     pointer(id, button = 0, y = 210) {
       render().props.onPointerDown({ button, clientX: 50, clientY: y, preventDefault() {},
@@ -248,6 +255,33 @@ test('all grid entries share title/location details; locked rows refuse quick dr
   grid.render()
   grid.dispatch('keydown', { key: 'Delete', target: { closest: () => null } })
   assert.equal(grid.deleted[0][0].id, 'locked')
+})
+
+test('current display day is highlighted and owns the only now line', async () => {
+  // 02:00 on Oct 22 still belongs to the Oct 21 display day (04:00 boundary).
+  const grid = await gridHarness([], '2026-10-21', new Date(2026, 9, 22, 2, 0, 0))
+  const tree = grid.tree()
+  const cells = nodes(tree).filter(node =>
+    typeof node.props.className === 'string' && node.props.className.startsWith('bsch-daycell'))
+  const todayCells = cells.filter(node => node.props.className.includes('is-today'))
+  assert.equal(todayCells.length, 1)
+  assert.equal(todayCells[0], cells[0])
+  const nowLines = nodes(tree).filter(node => node.props.className === 'bsch-nowline')
+  assert.equal(nowLines.length, 1)
+  assert.equal(nowLines[0].props.style.top, '1320px')
+  assert.ok(todayCells[0].children.includes(nowLines[0]))
+  const head = find(tree, node => node.props.className === 'bsch-grid-head')
+  const headToday = find(head, node => node.props.className === 'is-today')
+  assert.ok(find(headToday, node => node.props.className === 'bsch-today-tag'))
+})
+
+test('no today highlight or now line when the window is anchored elsewhere', async () => {
+  const grid = await gridHarness([], '2026-10-28', new Date(2026, 9, 22, 2, 0, 0))
+  const tree = grid.tree()
+  const cells = nodes(tree).filter(node =>
+    typeof node.props.className === 'string' && node.props.className.startsWith('bsch-daycell'))
+  assert.equal(cells.filter(node => node.props.className.includes('is-today')).length, 0)
+  assert.equal(nodes(tree).filter(node => node.props.className === 'bsch-nowline').length, 0)
 })
 
 test('selection drag excludes locked rows but Delete still includes them', async () => {

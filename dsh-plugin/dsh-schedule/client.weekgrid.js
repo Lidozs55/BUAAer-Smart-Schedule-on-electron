@@ -694,8 +694,12 @@ window.__ModuleLoader__.load({
         className: `bsch-hour${row.hideLabel ? ' is-nolabel' : ''}`,
       }, row.hideLabel ? null : h('span', { className: 'bsch-hourlabel' }, row.label)))
 
+      // The current display day (04:00–28:00, so 02:00 belongs to yesterday)
+      // and its now-line. `todayIndex` is -1 whenever the window is anchored
+      // elsewhere — then neither the highlight nor the line is painted.
       const todayIndex = days.indexOf(nowDay)
-      const nowLine = todayIndex >= 0 && nowMin >= DAY_START_MIN && nowMin <= DAY_END_MIN
+      const showNowLine = todayIndex >= 0 && nowMin >= DAY_START_MIN && nowMin <= DAY_END_MIN
+      const nowLine = showNowLine
         ? h('div', {
             className: 'bsch-nowline',
             style: { top: `${(nowMin - DAY_START_MIN) * PX_PER_MIN}px` },
@@ -707,12 +711,19 @@ window.__ModuleLoader__.load({
         className: i === todayIndex ? 'is-today' : undefined,
         onClick: () => { setGhost(null); setSelected(new Set()); props.onJumpTo(day) },
         title: t('grid.jumpTo'),
-      }, `${day.slice(5)} ${WEEKDAY_LABELS[dayOfWeek(day) - 1]}`))
+      }, i === todayIndex
+        ? h('span', { className: 'bsch-today-tag' }, t('grid.today'))
+        : null,
+      `${day.slice(5)} ${WEEKDAY_LABELS[dayOfWeek(day) - 1]}`))
 
       const dayCells = days.map((day, i) => h('div', {
         key: day,
-        className: `bsch-daycell${isWeekend(day) ? ' is-weekend' : ''}`,
-      }, hourRows(), nowLine, renderBlocks(day, i),
+        className: [
+          'bsch-daycell',
+          isWeekend(day) ? 'is-weekend' : '',
+          i === todayIndex ? 'is-today' : '',
+        ].filter(Boolean).join(' '),
+      }, hourRows(), i === todayIndex ? nowLine : null, renderBlocks(day, i),
         band !== null && band.day === i
           ? h('div', {
               className: 'bsch-block is-band',

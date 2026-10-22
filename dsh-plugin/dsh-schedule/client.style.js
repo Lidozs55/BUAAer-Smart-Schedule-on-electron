@@ -41,9 +41,13 @@ window.__ModuleLoader__.load({
 .bsch-grid { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
 .bsch-grid-head { position: sticky; top: 0; z-index: 3; display: grid; grid-template-columns: 34px repeat(7, minmax(78px, 1fr)); background: var(--dsw-alias-bg-base); border-bottom: 0.5px solid var(--dsw-alias-border-l1); }
 .bsch-grid-head > div { padding: 4px 2px; text-align: center; font-size: 12px; line-height: 18px; color: var(--dsw-alias-label-secondary); }
-.bsch-grid-head .is-today { color: var(--dsw-alias-brand-primary); font-weight: 500; }
+.bsch-grid-head .is-today { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 10%, transparent); color: var(--dsw-alias-brand-primary); font-weight: 600; box-shadow: inset 0 -2px 0 var(--dsw-alias-brand-primary); }
+.bsch-today-tag { display: inline-block; margin-right: 3px; padding: 0 3px; border-radius: var(--dsw-radius-xs); background: var(--dsw-alias-brand-primary); color: var(--dsw-alias-bg-base); font-size: 10px; font-weight: 500; line-height: 15px; }
 .bsch-daycell { position: relative; border-left: 0.5px solid var(--dsw-alias-border-l1); touch-action: pan-y; }
 .bsch-daycell.is-weekend { background: var(--dsw-alias-bg-layer-1); }
+/* Current display day (04:00–28:00): a tinted column with brand edges, so
+   the eye lands on today before it reads events that belong to later days. */
+.bsch-daycell.is-today { background: color-mix(in srgb, var(--dsw-alias-brand-primary) 7%, var(--dsw-alias-bg-base)); box-shadow: inset 1px 0 0 color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, transparent), inset -1px 0 0 color-mix(in srgb, var(--dsw-alias-brand-primary) 28%, transparent); }
 /* border-box keeps every row exactly 60px so hour lines stay on the
    minute→pixel lattice the blocks are positioned with (content-box would
    add each border to the row height and drift ~11px by 24:00). */
