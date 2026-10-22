@@ -125,7 +125,7 @@ ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component))
 | `shell.overlay` | list / root | 全窗口浮层，在每列之上、滚动容器之外；**层本身点击穿透**，条目需自己 opt-in 指针事件 | ★★ 提醒 toast |
 | `conversation.composer.dock` | list / session | 输入框卡片下方的环境条目（无 owner props） | ★ 会话内小挂件 |
 | `conversation.input.dock` | list / session | 输入框卡片上方整宽条目（owner props = `InputZone`） | ★ |
-| `tool.call.toolview` | keyed / session | 按线上工具名分派的工具卡片（见 `06` §7） | ★★ |
+| `tool.call.toolview` | keyed / session | 按线上工具名分派的工具卡片（见 `06` §9） | ★★ |
 | `root` | single / root | **绝对不要注册**：single 槽位里第二个条目会**遮蔽**整帧（且自动优先级让你赢），页面会只剩你的组件，所有 seat 消失 | ✖ |
 
 **id 的三重身份**（这就是 `sidebar.panellist` 与 `main` 的绑定方式）：
@@ -333,4 +333,4 @@ ctx.slots.register({ name: 'main', key: 'schedule-calendar', locale: 'scheduleCo
 - [ ] shell 样式使用 `--dsw-alias-*` / `--dsw-radius-*` / `--dsw-elevation-*`；类别配置的 `#RRGGBB` accent 是唯一颜色字面量例外；无主题选择器；边框 0.5px；圆角用 token。
 - [ ] 明暗两套主题都读过；控制台无 `slot entry crashed`。
 - [ ] 文案走 locale；组件卸载后无残留样式/监听/定时器。
-- [ ] 写操作只有一条路径（Host 服务方法），UI 与工具没有各写一套。
+- [ ] 写操作只有一条路径（Host 服务方法），UI 与 CLI 没有各写一套。

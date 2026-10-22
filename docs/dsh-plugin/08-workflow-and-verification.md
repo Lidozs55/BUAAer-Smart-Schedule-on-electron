@@ -103,7 +103,7 @@ plugin_manager { action: "install_bundle", target: "<bundle 目录绝对路径>"
 ### 6.1 Host 能力
 
 - [ ] 用 inspect 看到预期的服务/工具/命令/Config（`Service` / `Tool` / `Config` 三个 provider）。
-- [ ] 通过 **Agent 工具**真的执行一次，检查返回结构、失败路径、取消路径（打断后不能留下写了一半的状态）。
+- [ ] 通过 **Agent CLI** 真的执行一次，检查 JSON 回执结构、失败路径、超时/连接失败路径（结果未知时先查询，不能留下写了一半的状态）。
 - [ ] 涉及持久化的，重启后数据仍在且能重建（见 `04-data-and-state.md`）。
 
 ### 6.2 Client UI

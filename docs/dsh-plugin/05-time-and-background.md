@@ -105,8 +105,8 @@ interface JobOutcome {
 - 本地实现的默认限制：`maxConcurrentJobsPerOwner` 10（按精确 owner 计 `running` + `stopping`，无主作业共用一个桶）、`retainBytes` 256 KiB、`settledRetainBytes` 16 KiB、`pumpPollMs` 150。
 - 浏览器侧有一个现成的作业列表面板（`@deepseek-ai/dsh-client-ui-jobs`）；`ctx.jobController` 提供 `@Remote({ mode: 'stream' }) list/follow` 与 `@Remote('kill') kill`。**不要**自己再写一套轮询。
 
-本项目**不使用 jobs**：教务同步是"一次登录 + 两个整学期请求"，秒级完成，同步跑在工具调用里
-（`buaa_course_sync` 的 `timeoutMs` 180 s）比给用户维护一个作业列表更合适。需要多步进度时再考虑
+本项目**不使用 jobs**：教务同步是"一次登录 + 两个整学期请求"，秒级完成，同步跑在 CLI 命令里
+（`schedule buaa sync` 的 `timeoutMs` 180 s）比给用户维护一个作业列表更合适。需要多步进度时再考虑
 `ctx.jobs`（它不跨重启，长期任务仍应落存储 domain；只有确实需要 Agent 定时干活时才用 `ctx.schedule`）。
 
 ---
@@ -189,8 +189,8 @@ type CommandResult =
 - 事件 `'commands/change'()`：命令注册/注销后发出。
 - 客户端用 `ctx.remote.commands.execute(agent, line, submittedAttachments, signal)` 执行；`ctx.remote.commands.list()` 拿目录。**这是手写插件让 UI 触发 Host 操作的最省事路径**（见 `03-client-ui.md`）。
 
-本插件**不注册任何命令**。教务导入带密码，而命令输入会被记进会话日志；且整学期课表一学期只拉
-一次，没有值得做成快捷键的重复动作——导入走设置卡或 `buaa_course_sync` 工具。
+本插件**不注册任何 DSH Session 命令**。教务导入带密码，而命令输入会被记进会话日志；且整学期
+课表一学期只拉一次，没有值得做成快捷键的重复动作——导入走设置卡或 `schedule buaa sync` 命令。
 
 ---
 

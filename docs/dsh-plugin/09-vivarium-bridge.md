@@ -13,7 +13,7 @@
 
 | 插件 | 拥有 | 不拥有 |
 |---|---|---|
-| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、通用 Agent 工具、UI 面板、提醒子系统(提前量 Config、无状态 `upcomingReminders()` 派生集、页面 30s 轮询 + Web Notification/toast) | 桌宠概念;任何学校/导入来源;Agent 会话投递 |
+| 核心 `@lidozs55/dsh-schedule` | 数据(domain)、领域服务、`schedule` CLI、UI 面板、提醒子系统(提前量 Config、无状态 `upcomingReminders()` 派生集、页面 30s 轮询 + Web Notification/toast) | 桌宠概念;任何学校/导入来源;Agent 会话投递 |
 | 来源适配器 `@buaaer/dsh-schedule-buaa` | 北航 SSO、整学期教务导入、`sourceState.buaa` | 日程数据副本;提醒策略;UI 面板 |
 | 桥 `@lidozs55/dsh-schedule-bridge` | 跨插件 UX:提醒→桌宠 notice 气泡(任务含「已完成」快捷动作,条目仅「知道了」)、任务状态上报(基座 `tasks` 状态面) | 数据副本;提醒策略与时序真相;宠物语义(逾期担忧/清空庆祝的推导归基座);UI |
 
@@ -66,7 +66,7 @@ park 掉,核心插件无感;来源适配器同理:`inject: ['scheduleCore', ...]
 ## 4. 延后项
 
 - **拖拽收纳**(v1 §2.1 设想):等 vivarium 外部拖放目标 API;语义沿用剪贴板页(暂存→交给
-  Agent 调 `sched_*` 落库),`source: 'agent'` 不变。
+  Agent 用 `schedule` CLI 落库),`source: 'agent'` 不变。
 - **徽标常驻**:任务事实已入 vivarium `/vivarium/state` 快照 `tasks` 字段;物种要常驻「下一截止」
   徽标时,由基座把事实追加上信号线(additive)即可,桥无需改动。
 - 提醒模型与提前量的事实基线见 `00` §4.4；桥不新增提醒种类或来源专用地点字段。

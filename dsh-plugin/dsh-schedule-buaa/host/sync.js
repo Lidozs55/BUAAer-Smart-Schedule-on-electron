@@ -28,7 +28,7 @@ export async function runSync({ service, jw = { ssoLogin, fetchSchedule, fetchEx
   }
   const termCode = termCodeFor(termStart)
   const buaaId = creds.buaaId || service.getSourceState(SOURCE_ID).buaaId
-  if (!buaaId) throw new BuaaError('invalid_input', '缺少学号（先在设置或工具参数里提供）')
+  if (!buaaId) throw new BuaaError('invalid_input', '缺少学号（先在设置或命令参数里提供）')
 
   const jar = await jw.ssoLogin(buaaId, password)
 

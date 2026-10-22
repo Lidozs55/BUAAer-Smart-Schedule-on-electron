@@ -19,9 +19,5 @@
         "@lidozs55/dsh-schedule"
       ]
     }
-  },
-  "peerDependencies": {
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2",
-    "@deepseek-ai/schemastery": "^3.18.5"
   }
 }

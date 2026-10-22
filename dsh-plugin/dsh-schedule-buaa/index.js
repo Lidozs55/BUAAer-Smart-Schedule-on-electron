@@ -12,15 +12,15 @@
  */
 import { registerBuaaApi } from './host/api.js'
 import { runSync } from './host/sync.js'
-import { registerBuaaTools } from './host/tools.js'
+import { registerBuaaCommands } from './host/commands.js'
 
-export const inject = ['scheduleCore', 'connection', 'tools']
+export const inject = ['scheduleCore', 'connection', 'scheduleCommands']
 
 export async function apply(ctx) {
   const service = ctx.scheduleCore
   const deps = { service, runSync: creds => runSync({ service }, creds) }
 
-  ctx.effect(() => registerBuaaTools(ctx, deps), 'buaa-schedule: tools')
+  ctx.effect(() => registerBuaaCommands(ctx.scheduleCommands, deps), 'buaa-schedule: commands')
   ctx.effect(() => registerBuaaApi(ctx, deps), 'buaa-schedule: api')
 
   const systemPrompt = ctx.get('systemPrompt')
@@ -29,11 +29,11 @@ export async function apply(ctx) {
       name: 'buaa-schedule',
       order: 1001,
       text: () => [
-        '北航教务导入插件已启用：用 buaa_course_sync 一次导入整学期课表与考试。',
-        '它需要密码（仅当次使用、不保存）和学期起始日期（第一周周一，已保存在日程设置里则不必重复给）。',
+        '北航教务导入插件已启用：用 `schedule buaa sync` 一次导入整学期课表与考试；先运行 `schedule buaa --help`。',
+        '密码仅当次使用、不保存：用 --password-stdin 或 --password-env，不要写进普通命令行参数；学期起点已保存在日程设置里则不必重复给。',
         '导入是整学期快照：课表自带的周次即最终周次，重复导入会替换此前的教学与考试日程，未排课的空缺不会被外推。',
         '本插件生成锁定的课程与考试条目，并保留考试待办；课程用当前 course 类别、考试用 exam，类别已删除时归 other，不恢复已删除类别。锁定仅防快捷拖动，仍可显式编辑或删除。',
-        '导入以本工具的统计回执为准，不再手工补建同批条目或读取内部文件校验；不要在回复中复述密码。',
+        '导入以 CLI 的统计回执为准，不再手工补建同批条目或读取内部文件校验；不要在回复中复述密码。',
       ].join('\n'),
     }), 'buaa-schedule: prompt section')
   }

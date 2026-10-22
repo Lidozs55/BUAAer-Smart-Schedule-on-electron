@@ -520,29 +520,27 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
 
   const WATCH_PROMPT = [
     '这是「二游前瞻」周检。请核对原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环的官方版本前瞻直播与版本更新时间。',
-    '先调用 gacha_schedule（action=list）查看插件现有状态摘要；摘要不含完整推算依据，也不作为官方证据。',
+    '先运行 `schedule gacha list` 查看插件现有状态摘要（需要时先 `schedule gacha --help`）；摘要不含完整推算依据，也不作为官方证据。',
     '再到各游戏 B 站官方账号查看最近的版本更新公告、前瞻预告和动态，重点确认官方是否已给出明确日期/时间；终末地的版本节奏不固定，必须优先核对。',
-    '发现官方明确时间时，用 gacha_schedule（action=apply_official）按游戏写入 update_start / preview_start（带时区 ISO 8601，UTC+8）；只改本插件维护的日程，不要动其他条目。',
-    '需要阅读公告原文时可先用 action=posts 查看服务保存的原始公告与动态，再与官方渠道相互印证。',
+    '发现官方明确时间时，用 `schedule gacha apply-official --game <id> --update-start/--preview-start ...` 按游戏写入（带时区 ISO 8601，UTC+8）；只改本插件维护的日程，不要动其他条目。',
+    '需要阅读公告原文时可先用 `schedule gacha posts --game <id>` 查看服务保存的原始公告与动态，再与官方渠道相互印证。',
     '仅在成功核对且没有新信息时回复「本周无变化」；检索工具缺失、官方来源无法访问或材料不足时说明未核实，不推断无变化。',
   ].join('\n')
 
   /**
    * Register (or remove) the durable weekly check. `ctx.schedule` is an
    * optional bundle; without it the six-hour HTTP refresh still works and the
-   * tool reports the degraded mode instead of failing.
+   * command reports the degraded mode instead of failing.
    */
   async function setWatch(sessionId, { enabled = true } = {}) {
-    if (typeof sessionId !== 'string' || sessionId === '') {
-      throw invalid('无法确定当前会话，周检未登记')
-    }
     const schedule = typeof ctx.get === 'function' ? ctx.get('schedule') : undefined
     const watch = state.watch
 
     if (!enabled) {
-      if (schedule !== undefined && schedule !== null && watch.scheduleId !== null) {
+      if (schedule !== undefined && schedule !== null
+        && watch.scheduleId !== null && watch.sessionId !== null) {
         try {
-          await schedule.delete({ sessionId: watch.sessionId ?? sessionId, id: watch.scheduleId })
+          await schedule.delete({ sessionId: watch.sessionId, id: watch.scheduleId })
         } catch (error) {
           ctx.logger.warn('gacha-schedule: watch delete failed: %s', error.message)
         }
@@ -558,6 +556,10 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
         enabled: false,
         reason: '当前部署未启用「自动化任务」，无法登记每周 Agent 核对；每 6 小时的后台刷新仍然有效。',
       }
+    }
+
+    if (typeof sessionId !== 'string' || sessionId === '') {
+      throw invalid('缺少会话 id：请用 --session <id> 或设置 DSH_SESSION_ID / SCHEDULE_SESSION_ID')
     }
 
     if (watch.scheduleId !== null && watch.sessionId !== null) {

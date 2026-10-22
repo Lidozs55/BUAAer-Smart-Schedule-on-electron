@@ -9,7 +9,7 @@
 ## 1. 依赖方向
 
 ```
-@lidozs55/dsh-schedule          （核心：数据/服务/UI/提醒/通用工具）
+@lidozs55/dsh-schedule          （核心：数据/服务/UI/提醒/通用命令）
         ▲              ▲
         │              │
 @buaaer/dsh-schedule-buaa   @lidozs55/dsh-schedule-gacha
@@ -20,11 +20,11 @@
 
 硬规则：
 
-- 来源插件 `inject: ['scheduleCore', ...]`，核心未激活时 cordis 把来源插件 park 住。
+- 来源插件 `inject: ['scheduleCore', 'scheduleCommands', ...]`，核心未激活时 cordis 把来源插件 park 住。
 - 来源插件**不 import 核心包的内部文件**（`host/service.js`、`host/domain.js` 等），也不打开
   `schedule_core` storage domain。核心也不 import 来源包。
 - 卸载来源插件后，已写入的任务/条目与提醒必须原样存在；来源插件只影响"下一次导入"。
-- 一个操作只有一个实现：来源插件的 UI、工具、命令都调核心服务方法。
+- 一个操作只有一个实现：来源插件的 UI 与 CLI 命令都调核心服务方法。
 
 ---
 
@@ -54,7 +54,7 @@
 }
 ```
 
-类别来自 `getMeta().categories` 的有序 `{ id, name, color: "#RRGGBB" }` 定义，id 稳定；默认七项 `course/homework/exam/meeting/study/sports/other`，名称与颜色见 `00` §3.3。`other` 固定名“其它”、不可删除但可改色；其余预设均可删除，现有条目重归 `other`。手工未知 id 报错，来源快照未知 id 归 `other`，来源不得恢复用户删除的预设。地点不另设来源专用字段。锁定不限制编辑、删除、右键菜单或工具更新。
+类别来自 `getMeta().categories` 的有序 `{ id, name, color: "#RRGGBB" }` 定义，id 稳定；默认七项 `course/homework/exam/meeting/study/sports/other`，名称与颜色见 `00` §3.3。`other` 固定名“其它”、不可删除但可改色；其余预设均可删除，现有条目重归 `other`。手工未知 id 报错，来源快照未知 id 归 `other`，来源不得恢复用户删除的预设。地点不另设来源专用字段。锁定不限制编辑、删除、右键菜单或 CLI 更新。
 
 `replaceSourceEntries(source, inputs)` 是**该来源完整条目快照**：
 
@@ -84,7 +84,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - source id 必须匹配 `^[a-z][a-z0-9_-]*$`。任务的 `source` 标记使用同一文法（不再限定固定枚举），
   新的来源插件可以用自己的 id 标记它创建的任务，例如 `createTask({ ..., source: 'jwxt' })`。
 - 不要往 `sourceState` 放日程业务数据；任务/条目一律走核心服务。
-- 不要放密码。SSO 密码只作当次工具/设置调用入参。
+- 不要放密码。SSO 密码只作当次 CLI/设置调用入参。
 - **不要缓存会话**：一学期只导一次的来源，用密码换一次登录就够了；进程内 jar 缓存、cookie
   落盘、会话 jar 都会让"下次还能免密"变成需要维护的状态。北航适配器因此没有会话缓存。
 
@@ -96,11 +96,11 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 |---|---|---|
 | domain / schema / 冲突检测 / 撤销 | ✅ | ❌ |
 | 日历面板、任务页、剪贴板、通用设置 | ✅ | ❌ |
-| 通用条目/任务 Agent 工具 | ✅ | ❌ |
+| 通用条目/任务 CLI（`schedule entry/task`） | ✅ | ❌ |
 | 提醒子系统（提前量、无状态派生、页面轮询通知） | ✅ | ❌ |
 | `/api/schedule-core`、本格式 export/import | ✅ | ❌ |
 | SSO / 抓取 / 解析 | ❌ | ✅ |
-| 来源自己的 Agent 工具（如 `buaa_course_sync`） | ❌ | ✅ |
+| 来源自己的 CLI 命名空间（如 `schedule buaa sync`） | 只提供注册表/传输 | ✅ |
 | 来源设置卡与 `/api/<source>` 通道 | ❌ | ✅ |
 | 来源私有状态（学号/学期码） | 只提供 `sourceState` 容器 | ✅ |
 
@@ -114,12 +114,16 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 2. **Host 入口**：
 
    ```js
-   export const inject = ['scheduleCore', 'connection', 'tools']
+   export const inject = ['scheduleCore', 'connection', 'scheduleCommands']
    export async function apply(ctx) {
      const service = ctx.scheduleCore
-     // 注册自己的 tools / api / systemPrompt（后两者用 ctx.get）
+     ctx.effect(() => registerCommands(ctx.scheduleCommands, { service }), 'source: commands')
+     // 再注册自己的 api / systemPrompt（后者用 ctx.get 可选读取）
    }
    ```
+
+   命令定义包含命名空间、子命令、选项、示例、notes 和长教程 guide；核心注册表负责校验、
+   分层帮助、catalog 与分发。命令 handler 只调用 `scheduleCore` 或本来源 service，不复制业务实现。
 
 3. **写入**：解析外部数据 → 调用 `replaceSourceEntries(source, inputs)`（完整来源条目快照），或普通条目 CRUD / `createTask`。为每条来源条目生成稳定 `sourceKey`，不要复制冲突检测或存储实现。
 4. **状态**：学号、学期码等放 `sourceState.<source>`；密码/一次性 token/会话 jar 不入库。
@@ -128,7 +132,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
    学期起点这类**核心已拥有的设置不要在来源卡里重复一份**。
 6. **路由**：用 `ctx.connection.fetch.register` 注册 `/api/<source>-schedule`（北航即
    `/api/buaa-schedule`），沿用 `{ ok, value } | { ok, error }` wire shape；不要占用核心路由。
-7. **提示词**：用 `systemPrompt.section` 加一小段来源说明，不覆盖核心段。
+7. **提示词**：用 `systemPrompt.section` 加一小段来源说明，指向自己的 `schedule <命名空间> --help`，不覆盖核心段。
 8. **验收**：核心卸载时来源插件必须 park；来源卸载时核心数据/提醒不受影响；重启后
    `sourceState` 仍在。
 
@@ -141,7 +145,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - ❌ 让核心知道"北航"（核心只出现通用概念）。
 - ❌ 把来源学号写进核心 `getMeta()/setMeta()` 的公开契约。
 - ❌ 在来源插件里重做提醒、冲突检测、撤销栈。
-- ❌ 把密码写进 `sourceState`、Config、日志或会话命令输入。
+- ❌ 让来源插件直接打开核心数据库、另起 CLI server 或绕过 `scheduleCommands` 暴露命令。
+- ❌ 把密码写进 `sourceState`、Config、日志或命令输入。
 - ❌ 为"一学期一次"的导入维护会话缓存、cookie jar 或后台作业队列——它们是长期状态，
   换来的只是省一次输密码。
 - ❌ 把日历用不到的字段（教师姓名、学分、课程号、教务配色）解析进存储。
@@ -156,7 +161,7 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - `host/parse.js`：整学期课表按学期起点与教务实际周次生成带日期的普通课程条目；`exams.do` 生成考试条目与考试任务草稿。周次从 `cellDetail` 的周次行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开后只生成实际日期，不外推空周。教学安排使用 `category: 'course'`，考试使用 `exam`，均为 `lock: true`；地点统一为 `location`。教师姓名/学分/课程号/教务配色等日历不消费字段就地丢弃。
 - 类别升级独立标记 `categoryModelVersion: 1`：只把旧 BUAA `sourceKey` 以 `teaching:` 开头、类别为 `study` 的教学条目迁为 `course`，手建学习不变；若目标类别已删则归 `other`，不复活预设。
 - `host/sync.js`：一次登录 → `replaceSourceEntries('buaa', [...teachingEntries, ...examEntries])` 完整来源快照 + 考试任务对账；重复导入用稳定键保留条目 ID，缺席条目从本来源移除。学期码由 `termStart` 推导（见下），`-3` 为暑期学期。考试任务仍独立保留，身份键是**名称 + 考试日期**，同名期中/期末不能合并。任务删除范围限于本源且日期不早于学期起点；用户手建的同名考试任务只校正 `due`，标题/优先级/备注归用户。
-- `host/tools.js`：`buaa_course_sync`（Agent 调）。
+- `host/commands.js`：`schedule buaa sync` 与导入 guide（Agent 调）。
 - `host/api.js`：`/api/buaa-schedule`（设置卡调；只写学号，学期起点归核心设置页）。
 - `client.settings.js`：一张设置卡（学号、密码、导入），注册进核心的 `schedule.settings.blocks`。
 

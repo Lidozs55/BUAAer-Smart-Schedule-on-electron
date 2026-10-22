@@ -5,7 +5,7 @@
 ## 契约与验收
 
 - 主日程只有 entries；tasks 仍表达截止事项。entry 增加 `location: string | null` 和 `lock: boolean`（创建默认 false）。
-- lock 只拦截左键快捷移动/调整时长；显式编辑、删除、工具更新与来源同步照常工作。编辑器使用紧凑可访问 switch，标签“锁定（不可拖动）”。
+- lock 只拦截左键快捷移动/调整时长；显式编辑、删除、CLI 更新与来源同步照常工作。编辑器使用紧凑可访问 switch，标签“锁定（不可拖动）”。
 - 不再保留周期规则服务、例外编辑器或单独的提醒类型；`course` 是普通可配置的课程类别，教学安排使用 `course`，手工学习默认使用 `study`，地点统一 `location`。
 - 已有周期规则启动时一次性展开全部原始周次；保留改期例外，取消的实例不生成；确定性 id 保证失败重试不重复。缺少学期起点时拒绝迁移，不猜日期、不丢数据。
 - 来源完整快照使用 `replaceSourceEntries(source, inputs)`；`sourceKey` 是来源内稳定身份，更新保留 id，缺失项删除。输入必须全量校验后才写入。
@@ -18,7 +18,7 @@
 - [x] 核心 entries、来源快照接口和一次性持久迁移。
 - [x] UI 统一编辑、地点和拖动锁。
 - [x] 教务与 gacha 导入。
-- [x] agent 工具、skill、提醒、桥和文档。
+- [x] agent CLI、skill、提醒、桥和文档。
 - [x] 最终测试、旧引用扫描及独立评审收口：UTC 与 Asia/Shanghai 全量测试各 66/66；全仓 JS 语法与空白检查通过。真实 DSH DomainFacility 配合内存后端验证了首次打开、缺失锚点、部分删除失败及最终迁移标记失败的恢复；独立评审发现已回归修复。
 
 验收边界：未操作用户正在运行的宿主数据库，未做登录态浏览器冒烟或上游网络验证。重启/重新加载插件时执行一次性迁移；升级前应备份宿主业务存储。
@@ -40,7 +40,7 @@
 
 `global.categories` 是有序 `{ id, name, color: '#RRGGBB' }[]`，稳定 id 不随名称改变；新类别使用 `custom-UUID`。默认七项依次为课程 `course/#3B82F6`、作业 `homework/#F59E0B`、考试 `exam/#EF4444`、会议 `meeting/#A855F7`、学习 `study/#06B6D4`、运动 `sports/#22C55E`、其它 `other/#64748B`。仅缺少配置时补默认，不能向已有列表补回删除的预设。
 
-`other` 名称固定“其它”、不可删但颜色可调；其余预设和自定义类别均可改名、配色、删除。专用 `setCategories` 全量保存列表，删除时把现有条目重归 `other` 并保留来源、时间、锁等其它字段。手建未知类别 id 明确拒绝，来源快照未知 id 则归 `other`，后续来源同步不得复活类别。工具 `sched_entry(action=list)` 返回当前 `categories`，写入使用动态 id。
+`other` 名称固定“其它”、不可删但颜色可调；其余预设和自定义类别均可改名、配色、删除。专用 `setCategories` 全量保存列表，删除时把现有条目重归 `other` 并保留来源、时间、锁等其它字段。手建未知类别 id 明确拒绝，来源快照未知 id 则归 `other`，后续来源同步不得复活类别。`schedule entry list` 返回当前 `categories`，写入使用动态 id。
 
 独立迁移标记为 `categoryModelVersion: 1`，不替代 `entryModelVersion: 2`。只把旧 `source=buaa` 且 `sourceKey` 以 `teaching:` 开头的 `study` 教学条目改为 `course`，普通手建学习不变；旧周规则直接物化为 `course`，目标类别缺席仍归 `other`。过渡 schema 保留 `categories/categoryModelVersion`，迁移标记最后写入，重复启动不丢配置、不复活删除项。
 

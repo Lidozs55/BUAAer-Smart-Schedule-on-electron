@@ -77,9 +77,9 @@ window.__ModuleLoader__.load({
       'settings.notice': '公告',
       'settings.agentPrompt': [
         '请核对这六款二游的官方版本前瞻直播与版本更新时间：原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环。',
-        '先用 gacha_schedule（action=list）查看插件当前状态摘要；摘要不是官方证据，再用可用检索工具到各游戏 B 站官方账号核对最近的版本更新公告、前瞻预告和动态。',
-        '发现官方明确时间时，用 gacha_schedule（action=apply_official）按游戏写入带时区的 ISO 8601 时间；只修改插件维护的二游条目，不要动其他日程。',
-        '终末地的版本节奏不固定，请重点核对。无法检索或材料不足时明确说明未核实，不推断无变化。核对完成后，用 gacha_schedule（action=watch）开启固定每周三 10:00（Asia/Shanghai）的周检。',
+        '先用 `schedule gacha list` 查看插件当前状态摘要；摘要不是官方证据，再用可用检索工具到各游戏 B 站官方账号核对最近的版本更新公告、前瞻预告和动态。',
+        '发现官方明确时间时，用 `schedule gacha apply-official --game <id> --update-start/--preview-start ...` 按游戏写入带时区的 ISO 8601 时间；只修改插件维护的二游条目，不要动其他日程。',
+        '终末地的版本节奏不固定，请重点核对。无法检索或材料不足时明确说明未核实，不推断无变化。核对完成后，运行 `schedule gacha watch --session {sessionId}` 开启固定每周三 10:00（Asia/Shanghai）的周检。',
       ].join('\n'),
     }
 
@@ -104,9 +104,9 @@ window.__ModuleLoader__.load({
       'settings.notice': 'notice',
       'settings.agentPrompt': [
         'Verify the official preview stream and version update times for Genshin Impact, Honkai: Star Rail, Zenless Zone Zero, Wuthering Waves, Arknights: Endfield and NTE.',
-        'Start with gacha_schedule (action=list) to read its status summary, not official evidence; then use available search tools to check each game’s official Bilibili account for the latest update notice, preview teaser and dynamics.',
-        'When an official time is explicit, write it with gacha_schedule (action=apply_official) using an ISO 8601 instant with offset; only touch the gacha entries, never other schedules.',
-        'Endfield’s cadence is irregular — verify it carefully. If search is unavailable or evidence is insufficient, report that verification was not possible, not that nothing changed. Finish by enabling the fixed Wednesday 10:00 (Asia/Shanghai) check with gacha_schedule (action=watch).',
+        'Start with `schedule gacha list` to read its status summary, not official evidence; then use available search tools to check each game’s official Bilibili account for the latest update notice, preview teaser and dynamics.',
+        'When an official time is explicit, write it with `schedule gacha apply-official --game <id> --update-start/--preview-start ...` using an ISO 8601 instant with offset; only touch the gacha entries, never other schedules.',
+        'Endfield’s cadence is irregular — verify it carefully. If search is unavailable or evidence is insufficient, report that verification was not possible, not that nothing changed. Finish by enabling the fixed Wednesday 10:00 (Asia/Shanghai) check with `schedule gacha watch --session {sessionId}`.',
       ].join('\n'),
     }
 
@@ -201,7 +201,7 @@ window.__ModuleLoader__.load({
             requestId: crypto.randomUUID(),
             sessionId,
             mode: 'queue',
-            content: [{ type: 'text', text: t('settings.agentPrompt') }],
+            content: [{ type: 'text', text: t('settings.agentPrompt').replace('{sessionId}', sessionId) }],
           })
           if (!prompted.ok) throw prompted.error
           env.openSession(sessionId)

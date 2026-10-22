@@ -11,14 +11,14 @@
  */
 import { registerGachaApi } from './host/api.js'
 import { createGachaService } from './host/service.js'
-import { registerGachaTools } from './host/tools.js'
+import { registerGachaCommands } from './host/commands.js'
 
-export const inject = ['scheduleCore', 'connection', 'tools']
+export const inject = ['scheduleCore', 'connection', 'scheduleCommands']
 
 export async function apply(ctx) {
   const service = createGachaService(ctx, { service: ctx.scheduleCore })
 
-  ctx.effect(() => registerGachaTools(ctx, service), 'gacha-schedule: tools')
+  ctx.effect(() => registerGachaCommands(ctx.scheduleCommands, service), 'gacha-schedule: commands')
   ctx.effect(() => registerGachaApi(ctx, service), 'gacha-schedule: api')
   ctx.effect(() => () => service.dispose(), 'gacha-schedule: dispose')
   await service.reconcileCachedEntries()
@@ -47,12 +47,12 @@ export async function apply(ctx) {
       text: () => [
         '二游前瞻插件已启用：数据来自 gacha-calendar 服务（gacha.modenc.top，后台每 6 小时从六款游戏的 B 站官方账号采集公告并推算），',
         '插件每 6 小时读取格式化后的版本更新与前瞻直播时间，仅「版本前瞻直播」同步至日程；「版本更新」只保存为来源信息，不占用日历时间。',
-        '用 gacha_schedule 查询（action=list）；action=posts 可分页读取服务保存的原始公告/动态原文（含发布时间与链接），核对更新时间时优先阅读原文；',
-        '官方明确给出时间时用 action=apply_official 按游戏写入（带时区 ISO 8601，UTC+8），校正会转发到服务端对所有端点生效；',
+        '用 `schedule gacha list` 查询、`schedule gacha refresh` 立即刷新、`schedule gacha posts` 分页读取服务保存的原始公告/动态原文（含发布时间与链接）；先运行 `schedule gacha --help`。',
+        '官方明确给出时间时用 `schedule gacha apply-official` 按游戏写入（带时区 ISO 8601，UTC+8），校正会转发到服务端对所有端点生效；',
         '推算前瞻时间可编辑；官方明确日期与时间的前瞻仅锁定快捷拖动，其他编辑照常。不要把其他日程改成二游内容。',
-        '查询、刷新和官方校正都使用本插件工具，不用 sched_entry 替代刷新或额外创建同一前瞻；显式编辑/删除不受锁定限制，但后续刷新仍会按来源规则对账。',
+        '查询、刷新和官方校正都使用该 CLI，不用 `schedule entry` 替代刷新或额外创建同一前瞻；显式编辑/删除不受锁定限制，但后续刷新仍会按来源规则对账。',
         'list 只提供状态摘要，不作为官方证据；官方校正须有用户提供的明确官方材料或可用检索工具查证，不把推算当官方时间。',
-        '需要每周由 Agent 核对一次（终末地节奏不固定）时，用 action=watch 登记，固定为每周三 10:00（Asia/Shanghai），工具只支持开关；',
+        '需要每周由 Agent 核对一次（终末地节奏不固定）时，用 `schedule gacha watch --session <当前会话 id>` 登记，固定为每周三 10:00（Asia/Shanghai），只支持开关；',
         '该能力依赖「自动化任务」bundle，缺失时只保留 6 小时后台刷新。',
       ].join('\n'),
     }), 'gacha-schedule: prompt section')

@@ -1,9 +1,12 @@
 {
   "name": "@lidozs55/dsh-schedule",
   "version": "0.2.0",
-  "description": "Generic DSH schedule core: calendar entries, tasks, reminders, tools and panel.",
+  "description": "Generic DSH schedule core: calendar entries, tasks, reminders, CLI commands and panel.",
   "private": true,
   "type": "module",
+  "bin": {
+    "schedule": "./bin/schedule.js"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js"
@@ -26,7 +29,6 @@
   },
   "peerDependencies": {
     "@deepseek-ai/dsh-storage-domain": "^0.2.1-rc.2",
-    "@deepseek-ai/dsh-tools": "^0.2.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.5",
     "zod": "^4.4.3"
   }
