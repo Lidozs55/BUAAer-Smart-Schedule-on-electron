@@ -124,6 +124,8 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 
    命令定义包含命名空间、子命令、选项、示例、notes 和长教程 guide；核心注册表负责校验、
    分层帮助、catalog 与分发。命令 handler 只调用 `scheduleCore` 或本来源 service，不复制业务实现。
+   需要后台定时（`ctx.timer`）时把 `'timer'` 也加进 `inject`：访问未声明的服务属性会在激活时
+   直接抛 `cannot get property "timer" without inject`（见 `05-time-and-background.md`）。
 
 3. **写入**：解析外部数据 → 调用 `replaceSourceEntries(source, inputs)`（完整来源条目快照），或普通条目 CRUD / `createTask`。为每条来源条目生成稳定 `sourceKey`，不要复制冲突检测或存储实现。
 4. **状态**：学号、学期码等放 `sourceState.<source>`；密码/一次性 token/会话 jar 不入库。

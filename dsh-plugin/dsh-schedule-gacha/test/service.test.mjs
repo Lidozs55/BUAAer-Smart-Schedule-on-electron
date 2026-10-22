@@ -34,12 +34,15 @@ const baseNotice = {
   is_update_notice: true,
 }
 
-function harness({ initialEntries = [], prediction = basePrediction, networkFailure = false } = {}) {
+function harness({
+  initialEntries = [], prediction = basePrediction, networkFailure = false,
+  lastRefreshAt = new Date().toISOString(),
+} = {}) {
   const rows = new Map(initialEntries.map(row => [row.id, structuredClone(row)]))
   let serial = 0
   let saved = {
     enabled: Object.fromEntries(GAME_IDS.map(id => [id, id === 'hsr'])),
-    games: { hsr: { plan: planFromApi({ ...baseView, prediction }), lastRefreshAt: new Date().toISOString() } },
+    games: { hsr: { plan: planFromApi({ ...baseView, prediction }), lastRefreshAt } },
   }
   const writes = []
   const service = {
@@ -197,6 +200,36 @@ test('official preview locks time; update-only confirmation remains source info'
   } finally { h.adapter.dispose() }
 })
 
+test('a later refresh that turns the preview official locks the existing inferred entry', async () => {
+  const h = harness()
+  try {
+    await h.adapter.requestRefresh(['hsr'])
+    const first = [...h.rows.values()][0]
+    assert.equal(first.lock, false)
+    assert.equal(first.start, '2099-10-30T19:30:00+08:00')
+    h.rows.set(first.id, { ...first, title: '一起看直播' })
+
+    // The service later publishes the explicit official preview time.
+    h.api.games = async () => [{
+      ...baseView,
+      prediction: {
+        ...basePrediction,
+        preview: { utc: '2099-10-31T11:00:00Z', end_utc: '2099-10-31T13:00:00Z' },
+        preview_confidence: 'official',
+        preview_evidence: '官方动态',
+      },
+    }]
+    await h.adapter.requestRefresh(['hsr'])
+
+    const locked = h.rows.get(first.id)
+    assert.equal(locked.lock, true)
+    assert.equal(locked.start, '2099-10-31T19:00:00+08:00')
+    assert.equal(locked.end, '2099-10-31T21:00:00+08:00')
+    assert.equal(locked.title, '一起看直播')
+    assert.equal(h.adapter.getPublicGame('hsr').plan.previewConfidence, 'official')
+  } finally { h.adapter.dispose() }
+})
+
 test('refresh preserves inferred user time and all editable fields, including after restart; official replaces only timing', async () => {
   const h = harness()
   let restarted
@@ -218,13 +251,20 @@ test('refresh preserves inferred user time and all editable fields, including af
 })
 
 test('service outage keeps the previous plan and entries, still clears obsolete update imports', async () => {
-  const h = harness({ networkFailure: true, initialEntries: [old('update'), { ...old('preview', 'other'), description: '[gacha:genshin][kind:preview]' }] })
+  const stale = '2000-01-01T00:00:00.000Z'
+  const h = harness({
+    networkFailure: true, lastRefreshAt: stale,
+    initialEntries: [old('update'), { ...old('preview', 'other'), description: '[gacha:genshin][kind:preview]' }],
+  })
   try {
     await h.adapter.requestRefresh(['hsr'])
     assert.equal(h.rows.has('update'), false); assert.equal(h.rows.has('other'), true)
     assert.ok(h.adapter.getPublicGame('hsr').lastError)
     // The cached plan survives the outage.
     assert.ok(h.adapter.getPublicGame('hsr').plan.previewStart)
+    // A failed fetch must not look like a successful sync.
+    assert.equal(h.adapter.getPublicGame('hsr').lastRefreshAt, stale)
+    assert.equal(h.adapter.getPublicState().lastRefreshAt, null)
   } finally { h.adapter.dispose() }
 })
 

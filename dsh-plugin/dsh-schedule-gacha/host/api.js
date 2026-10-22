@@ -34,9 +34,9 @@ function operations(service) {
       if (body.game !== undefined && !GAME_IDS.includes(body.game)) {
         throw Object.assign(new Error(`未知游戏：${body.game}`), { code: 'invalid_input' })
       }
-      // The refresh runs in the worker queue and is observed through the
-      // `refreshing` flag; the HTTP call must not hold the connection for a
-      // minute of Bilibili rate limiting.
+      // The refresh runs in the shared worker queue and is observed through
+      // the `refreshing` flag; the HTTP call returns immediately instead of
+      // holding the connection for a full service round-trip.
       if (body.game === undefined) void service.requestRefresh()
       else void service.requestRefresh([body.game])
       return service.getPublicState()

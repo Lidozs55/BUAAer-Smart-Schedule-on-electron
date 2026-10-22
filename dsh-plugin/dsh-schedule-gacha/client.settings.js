@@ -181,7 +181,11 @@ window.__ModuleLoader__.load({
       const refreshAll = async () => {
         setBusy(true)
         try {
-          setState(await api.refresh())
+          const next = await api.refresh()
+          setState(next)
+          // A refresh that finished before the response has no
+          // `refreshing` transition left to hook, so repaint immediately.
+          if (next?.refreshing !== true) notifyDataChanged()
           setStatus({ ok: true, text: t('settings.started') })
         } catch (cause) {
           setStatus({ ok: false, text: cause.message })

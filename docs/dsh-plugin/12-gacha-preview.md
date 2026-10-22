@@ -5,7 +5,7 @@
 > 其余日程一概不碰。
 
 插件位置：`dsh-plugin/dsh-schedule-gacha/`，row id `gacha-schedule`，
-`inject: ['scheduleCore', 'connection', 'scheduleCommands']`。日程条目真相仍在核心
+`inject: ['scheduleCore', 'connection', 'scheduleCommands', 'timer']`。日程条目真相仍在核心
 `@lidozs55/dsh-schedule`（日程条目 + `sourceState.gacha`）；B 站采集、公告解析与
 推算逻辑已迁移至独立服务 **gacha-calendar**（仓库
 `The-Astral-Express-Family/gacha-calendar`，Go + GORM + SQLite + Vue），
@@ -26,6 +26,9 @@
 
 每款游戏可单独开关；关闭时只删除本插件写入的、带该游戏标记的条目。
 
+上表的 mid、版本节奏与前瞻惯例是 **gacha-calendar 服务端配置**（采集与推算用），
+插件只保留 `id → 名称` 映射与条目归属标记；服务端调整账号或规则不需要插件发版。
+
 ---
 
 ## 2. 文件地图
@@ -33,8 +36,8 @@
 | 文件 | 职责 |
 |---|---|
 | `index.js` | host 入口：注册 commands/api、首次 20 s 刷新、每 6 h 定时刷新、`systemPrompt` 段落 |
-| `host/games.js` | 六款游戏的静态知识（mid、标题正则、标记函数）；采集与推算已移至服务 |
-| `host/calendarApi.js` | gacha-calendar 服务 HTTP 客户端（games / posts / refresh / overrides） |
+| `host/games.js` | 六款游戏的 id/名称与条目归属标记；mid、标题正则、版本节奏与推算规则全在服务端 |
+| `host/calendarApi.js` | gacha-calendar 服务 HTTP 客户端（games / posts / overrides） |
 | `host/service.js` | 服务视图 → 插件 plan 映射（UTC RFC3339 → `+08:00` ISO）、条目对账、官方校正转发 |
 | `host/state.js` | `SOURCE_ID = 'gacha'`，`sourceState` 归一化 |
 | `host/commands.js` | CLI 命名空间 `schedule gacha list/refresh/posts/apply-official/watch` + guide |
@@ -62,6 +65,8 @@ gacha-calendar 仓库 `backend/internal/parse`（测试覆盖六种公告格式�
    用户手工与其他来源条目不动。版本更新时间仍参与显示，不写入主日程。
 5. 服务端每 6 h 自行采集 B 站（专栏 → 摘要优先合并 → 前瞻视频/动态 → 纯规则推算），
    插件同样每 6 h 拉取格式化结果；启动时先用缓存计划对账，不必等待网络。
+6. 拉取失败只写 `lastError`，不推进 `lastRefreshAt`：失败不会被当成一次成功的远端同步，
+   恢复后下一轮定时或手动刷新立即补上。
 
 ---
 
@@ -96,6 +101,9 @@ Agent 官方校正是**转发**：`schedule gacha apply-official` 本地校验�
 
 - 条目统一使用普通 `category: 'other'`、可空 `location` 与布尔 `lock`；不另设来源专用类型或编辑器。
 - `lock=false`：推算时间；`lock=true`：官方明确公布了直播日期时间（含 Agent 校正）。
+  每次刷新都按服务端当前的 `preview_confidence` 重算：`official` / `agent` 锁，`inferred` / `video`
+  不锁。某次刷新把它从推算变成官方时，同一次会**写入官方时间并把 `lock` 改为 true**，
+  标题/说明/地点等用户字段仍保留。
   锁只限制鼠标左键快捷移动/缩放，**不禁止**普通编辑、删除或右键操作。
 - 标题形如 `原神 7.2 版本前瞻直播`；说明保留版本、依据和公告链接；推算值注明「推算」。
 - 前瞻过去 2 天以上不再创建；下次刷新滚动到新版本。关闭游戏时删除本源前瞻条目。
@@ -134,7 +142,7 @@ Agent 官方校正是**转发**：`schedule gacha apply-official` 本地校验�
 `client.settings.js` 注册进核心的 `schedule.settings.blocks`（`order: 20`），不新开页面：
 
 - 六行游戏开关 + 每行的版本/更新/前瞻摘要，推算值前加 `≈`。
-- "立即刷新"从服务拉取格式化结果；卡片轮询 `refreshing`，结束后广播 `schedule:data-changed`。
+- “立即刷新”从服务拉取格式化结果；卡片轮询 `refreshing`，结束后广播 `schedule:data-changed`。
 - "让 Agent 核对"创建普通会话并投递核对 prompt；失败信息就地展示。
 
 ---

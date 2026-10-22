@@ -5,7 +5,7 @@
  * `sourceState[SOURCE_ID]`; every field below is this plugin's own business
  * fact. The schedule entries themselves never live here — this file only
  * remembers which core entry ids belong to which game track, plus the last
- * parse result so a failed refresh can keep the previous dates.
+ * service plan so a failed refresh can keep the previous dates.
  */
 import { GAME_IDS } from './games.js'
 
@@ -23,10 +23,7 @@ export const emptyGameState = () => ({
   lastRefreshAt: null,
   lastError: null,
   article: null,
-  current: null,
-  officialPlan: null,
   plan: null,
-  override: null,
   entries: { preview: null, update: null },
   syncedPreview: null,
 })
@@ -61,19 +58,6 @@ function normalizePlan(raw) {
   }
 }
 
-function normalizeOverride(raw) {
-  if (!isObject(raw)) return null
-  return {
-    version: text(raw.version),
-    updateStart: text(raw.updateStart),
-    updateEnd: text(raw.updateEnd),
-    previewStart: text(raw.previewStart),
-    previewEnd: text(raw.previewEnd),
-    note: text(raw.note),
-    appliedAt: text(raw.appliedAt),
-  }
-}
-
 function normalizeGameState(raw) {
   if (!isObject(raw)) return emptyGameState()
   const entry = key => text(raw.entries?.[key])
@@ -82,10 +66,7 @@ function normalizeGameState(raw) {
     lastRefreshAt: text(raw.lastRefreshAt),
     lastError: text(raw.lastError),
     article: normalizeArticle(raw.article),
-    current: isObject(raw.current) ? raw.current : null,
-    officialPlan: normalizePlan(raw.officialPlan),
     plan: normalizePlan(raw.plan),
-    override: normalizeOverride(raw.override),
     entries: { preview: entry('preview'), update: entry('update') },
     syncedPreview: isObject(raw.syncedPreview) ? raw.syncedPreview : null,
   }

@@ -65,10 +65,10 @@ dsh-plugin/dsh-schedule-buaa/
 dsh-plugin/dsh-schedule-gacha/
 ├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
 ├── cordis.patch.yml      # 插入 row gacha-schedule
-├── index.js              # inject: ['scheduleCore', 'connection', 'scheduleCommands']；6 小时刷新
+├── index.js              # inject: ['scheduleCore', 'connection', 'scheduleCommands', 'timer']；6 小时刷新
 ├── host/
-│   ├── games.js          # 六款游戏的 mid / 标题正则 / 默认窗口与节奏 / 条目归属标记
-│   ├── calendarApi.js    # gacha-calendar 服务 HTTP 客户端（games / posts / refresh / overrides）
+│   ├── games.js          # 六款游戏的 id/名称与条目归属标记（采集、规则与推算在服务端）
+│   ├── calendarApi.js    # gacha-calendar 服务 HTTP 客户端（games / posts / overrides）
 │   ├── state.js          # sourceState.gacha
 │   ├── service.js        # 服务视图映射、条目对账、官方覆盖转发、周检登记
 │   ├── commands.js       # schedule gacha list/refresh/posts/apply-official/watch + guide
@@ -256,7 +256,7 @@ CLI server 只做参数校验与分发，不提供任意 service/route 透传；
 **二游前瞻来源插件**：CLI 命名空间 `schedule gacha list|refresh|posts|apply-official|watch`；
 客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。读取
 gacha-calendar 服务（B 站采集/解析/推算在服务端）的格式化结果，为原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环各维护
-前瞻直播条目（推算 `lock=false`，官方明确时刻 `lock=true`）；版本更新只在来源卡显示。条目带来源归属，只删改本源条目，不触碰其他来源或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
+前瞻直播条目（推算 `lock=false`，官方明确时刻 `lock=true`）；版本更新只在来源卡显示。条目带来源归属，只删改本源条目，不触碰其他来源或用户手建日程。`sourceState.gacha` 存上次公告元数据、服务计划缓存、开关与周检登记；
 后台每 6 小时刷新（`ctx.timer`，缺失时只停自动刷新，命令与设置卡仍可用）。开启 `watch` 需要
 当前会话 id（`--session`、`SCHEDULE_SESSION_ID` 或 `DSH_SESSION_ID`）来登记自动化周检；`watch --no-enabled` 关闭无需 id。
 

@@ -13,7 +13,7 @@ import { registerGachaApi } from './host/api.js'
 import { createGachaService } from './host/service.js'
 import { registerGachaCommands } from './host/commands.js'
 
-export const inject = ['scheduleCore', 'connection', 'scheduleCommands']
+export const inject = ['scheduleCore', 'connection', 'scheduleCommands', 'timer']
 
 export async function apply(ctx) {
   const service = createGachaService(ctx, { service: ctx.scheduleCore })
@@ -26,7 +26,8 @@ export async function apply(ctx) {
   // Background refresh reads the formatted service state: no Agent turn is
   // required, and a profile without the optional schedule bundle still gets
   // correct dates. The service itself re-collects from Bilibili every 6 h.
-  // `ctx.timer` is a Cordis context mixin (not a service).
+  // `timer` is an injected service, so a profile without it parks this bundle
+  // instead of throwing on `ctx.timer`.
   const timer = ctx.timer
   if (timer !== undefined && timer !== null) {
     ctx.effect(() => timer.timeout(() => {

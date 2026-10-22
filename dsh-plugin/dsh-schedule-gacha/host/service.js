@@ -291,12 +291,14 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
 
       const plan = view === null ? gs.plan : planFromApi(view)
       if (view !== null) {
+        // A failed fetch is reported, not remembered as a successful sync:
+        // `lastRefreshAt` is the freshness stamp `needsRefresh()` trusts.
+        gs.lastRefreshAt = new Date().toISOString()
         if (notice !== null) gs.article = articleFromPost(notice)
         gs.lastError = null
       }
 
       gs.plan = plan
-      gs.lastRefreshAt = new Date().toISOString()
       if (view !== null && view.status !== undefined) {
         gs.status = view.status === 'ok' ? 'ok' : view.status === 'partial' ? 'partial' : 'error'
         if (typeof view.last_error === 'string' && view.last_error !== '') {
@@ -318,7 +320,7 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
       }
 
       await reconcileEntries(game, plan, Date.now())
-      state.lastRefreshAt = new Date().toISOString()
+      if (view !== null) state.lastRefreshAt = new Date().toISOString()
       await persist()
       info('%s refresh %s in %d ms', game.name, gs.status, Date.now() - startedMs)
       return {
@@ -362,7 +364,12 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
         return results
       })()
     }
-    return worker ?? Promise.resolve([])
+    // The worker is shared by timers, commands and the settings card, so a
+    // caller only sees the games it asked for.
+    const pending = worker
+    return pending === null
+      ? Promise.resolve([])
+      : pending.then(results => results.filter(result => queued.includes(result.game)))
   }
 
   function needsRefresh() {
@@ -389,8 +396,6 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
       version: gs.plan?.version ?? null,
       article: gs.article,
       plan: gs.plan,
-      officialPlan: gs.plan,
-      override: null,
       entries: { ...gs.entries },
     }
   }
@@ -499,7 +504,7 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
       warn('%s override forward failed: %s', game.name, error.message)
       throw new GachaError('service_error', `写入 gacha-calendar 失败：${error.message}`)
     }
-    await refreshGame(id, { signal: lifetime.signal })
+    await requestRefresh([id])
     const result = publicGame(id)
     if (result.plan === null) throw invalid('给出的时间不足以形成一条日程')
     return result
@@ -514,7 +519,7 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
       warn('%s override clear failed: %s', id, error.message)
       throw new GachaError('service_error', `清除 gacha-calendar 覆盖失败：${error.message}`)
     }
-    await refreshGame(id, { signal: lifetime.signal })
+    await requestRefresh([id])
     return publicGame(id)
   }
 
@@ -618,7 +623,6 @@ export function createGachaService(ctx, { service, calendarApi } = {}) {
     getPublicState,
     getPublicGame: publicGame,
     requestRefresh,
-    refreshGame: id => requestRefresh([id]),
     needsRefresh,
     reconcileCachedEntries,
     setEnabled,

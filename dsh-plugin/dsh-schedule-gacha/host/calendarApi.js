@@ -95,31 +95,6 @@ export function createCalendarApi() {
       return body
     },
 
-    async post(id, signal) {
-      const body = await request(`/api/posts/${encodeURIComponent(id)}`, { signal })
-      return body?.data ?? null
-    },
-
-    /** Server-side predictions page. */
-    async predictions({ gameId, page = 1, pageSize = 20, active = true, order = 'asc' } = {}, signal) {
-      const params = new URLSearchParams({
-        page: String(page), page_size: String(pageSize),
-        active: active === true ? '1' : '0', order,
-      })
-      if (gameId !== undefined) params.set('games', gameId)
-      const body = await request(`/api/predictions?${params.toString()}`, { signal })
-      return body
-    },
-
-    /** Trigger a server-side collection cycle (admin token required). */
-    async refresh(games, signal) {
-      return request('/api/admin/refresh', {
-        method: 'POST',
-        ...(games === undefined ? {} : { body: { games } }),
-        signal,
-      })
-    },
-
     /** Write the official-time correction layer for one game. */
     async putOverride(gameId, payload, signal) {
       return request(`/api/admin/overrides/${encodeURIComponent(gameId)}`, {

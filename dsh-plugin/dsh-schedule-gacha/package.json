@@ -1,7 +1,7 @@
 {
   "name": "@lidozs55/dsh-schedule-gacha",
   "version": "0.1.0",
-  "description": "Gacha preview tracker: official Bilibili announcements for Genshin, HSR, ZZZ, WuWa, Endfield and NTE.",
+  "description": "Gacha preview tracker: pulls formatted version and preview-stream plans for six games from the gacha-calendar service and keeps one preview entry per game.",
   "private": true,
   "type": "module",
   "exports": {

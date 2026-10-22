@@ -1,7 +1,7 @@
 /**
  * `schedule gacha` command namespace.
  *
- * The source adapter owns its games, parsing rules and preview entries; the
+ * The source adapter owns its games, source markers and preview entries; the
  * core owns discovery, validation and transport. Command handlers can only
  * address this source's games, never arbitrary schedule entries.
  */
@@ -26,7 +26,7 @@ export function registerGachaCommands(registry, service) {
       {
         name: 'refresh',
         summary: '立即刷新一个或全部游戏',
-        description: '进入后台刷新队列，可能受 B 站限流影响；回执含本次刷新结果。',
+        description: '重新读取 gacha-calendar 服务格式化后的最新结果（服务的 B 站采集另有后台周期）；回执含本次刷新结果。',
         timeoutMs: 180_000,
         options: {
           game: { type: 'string', enum: GAME_IDS, description: '省略刷新全部已启用游戏' },

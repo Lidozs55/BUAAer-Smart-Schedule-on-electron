@@ -43,6 +43,11 @@ export function apply(ctx) {
 
 不要用裸 `setInterval`：它不属于任何 effect，卸载后仍在跑。
 
+> **Host 侧必须先声明 `inject`**：`ctx.timer` 是注入的服务，宿主插件只写
+> `ctx.timer` 而不在 `export const inject` 里列 `'timer'`，激活时会报
+> `cannot get property "timer" without inject`（本仓库 gacha 插件曾踩过）。
+> 客户端 bundle 的 `dsh.client.inject` 同理要列 `timer`。
+
 ---
 
 ## 3. `ctx.jobs`：后台作业（可观察、可取消）
