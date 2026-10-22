@@ -107,6 +107,7 @@ test('CLI discovers commands and guides, then executes a write and list', async 
       '--end', '2026-10-24T16:00:00+08:00',
       '--category', 'course',
       '--location', '主103',
+      '--remind-lead', '60',
     ])
     assert.equal(created.status, 0)
     const receipt = json(created)
@@ -114,7 +115,12 @@ test('CLI discovers commands and guides, then executes a write and list', async 
     assert.equal(receipt.command, 'entry.create')
     assert.equal(receipt.value.title, '编译器构造')
     assert.equal(receipt.value.week, 7)
+    assert.equal(receipt.value.remindLead, 60)
     assert.equal(typeof receipt.value.id, 'string')
+
+    const cleared = await run(['entry', 'update', '--id', receipt.value.id, '--remind-lead', '-1'])
+    assert.equal(cleared.status, 0)
+    assert.equal(json(cleared).value.remindLead, null)
 
     const listed = json(await run(['entry', 'list', '--from', '2026-10-24T00:00:00+08:00', '--to', '2026-10-25T00:00:00+08:00']))
     assert.equal(listed.ok, true)

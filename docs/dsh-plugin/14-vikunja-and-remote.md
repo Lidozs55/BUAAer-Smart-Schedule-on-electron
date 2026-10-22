@@ -75,12 +75,12 @@ index.js Config）；任务页固定分组；只有周网格一种视图。
 按性价比排序，采纳：
 
 1. **按条目/任务定制提醒提前量**（Vikunja 的相对提醒思想，单值子集）：`remindLead`
-   可空分钟数，null=跟随全局四档，0=准时；schema/派生/编辑器/Agent 工具全链路。
+   可空分钟数，null=跟随全局四档，0=准时；schema/派生/编辑器/CLI 全链路。
    ——采纳，本批实现。
 2. **触屏长按替代右键** + `pointercancel` 清理 + 触控热区/字号 + 窄屏日视图：
    remote-web-ui 适配的四件套。——采纳，本批实现。
 3. 重复任务原地重生语义（适合「每周作业」类）：**延后**，等按条目提醒验证后再议。
-4. Quick Add 子集语法：**暂不做**。我们的「自然语言建日程 = Agent 调 `sched_*` 工具」
+4. Quick Add 子集语法：**暂不做**。我们的「自然语言建日程 = Agent 调 `schedule` CLI」
    已是 quick add 的 LLM 增强版（剪贴板队列→发新会话即 Inbox 思路变体），UI 内再放
    一套正则语法收益有限。
 5. 保存筛选器/视图抽象/软删除/稳定引用：延后。
@@ -91,7 +91,7 @@ API token、OAuth、CalDAV 服务端、邮件通知。
 ## 5. 落地日志
 
 - 2026-10-22：本文建档，同日落地 §4-1/2 全部四件：
-  - `236aa98` remindLead 全链路（schema/派生/服务校验/导入/工具/编辑器/测试）
+  - `236aa98` remindLead 全链路（schema/派生/服务校验/导入/CLI/编辑器/测试）
   - `09e4e3c` 触屏长按替代右键 + 全手势 pointercancel 释放
   - `2e482e3` coarse-pointer 触控热区（44px/16px）
   - `f49d9df` 窄屏日视图（WeekGrid dayCount + 日/周切换）

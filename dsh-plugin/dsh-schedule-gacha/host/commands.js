@@ -10,9 +10,9 @@ import { GAME_IDS } from './games.js'
 export function registerGachaCommands(registry, service) {
   const dispose = registry.register({
     name: 'gacha',
-    summary: '二游版本前瞻：查询、刷新、官方校正与周检',
-    description: '只读六款游戏的 B 站官方账号，维护版本前瞻直播条目；版本更新只保存为来源信息。只在启用二游前瞻插件时可用。',
-    usage: 'schedule gacha <list|refresh|apply-official|watch> [选项]',
+    summary: '二游版本前瞻：查询、刷新、原文核对、官方校正与周检',
+    description: '读取 gacha-calendar 服务格式化的六款游戏版本信息，维护版本前瞻直播条目；版本更新只保存为来源信息。只在启用二游前瞻插件时可用。',
+    usage: 'schedule gacha <list|refresh|posts|apply-official|watch> [选项]',
     commands: [
       {
         name: 'list',
@@ -41,6 +41,40 @@ export function registerGachaCommands(registry, service) {
             startedAt: new Date().toISOString(),
             results: await service.requestRefresh(input.game === undefined ? undefined : [input.game]),
           }
+        },
+      },
+      {
+        name: 'posts',
+        summary: '分页读取服务保存的原始公告与动态',
+        description: '读取 gacha-calendar 服务保存的 B 站公告、动态与视频元数据（标题、UTC 发布时间、原文入口），用于核对官方时间；只读，不写入日程。',
+        timeoutMs: 60_000,
+        options: {
+          game: { type: 'string', enum: GAME_IDS, description: '省略读取全部游戏' },
+          page: { type: 'integer', default: 1, description: '页码，从 1 开始' },
+          'page-size': { type: 'integer', default: 20, description: '每页条数，1–100' },
+          type: { type: 'string', description: '原始类型过滤，如 article/dynamic/video' },
+        },
+        examples: [
+          'schedule gacha posts --game genshin --page-size 5',
+          'schedule gacha posts --game endfield --type article --page 2',
+        ],
+        notes: [
+          '返回服务原始分页结构；标题与链接用于核对，发布时间的 utc 字段为 UTC。',
+          '只把清晰可核对的官方内容当作证据；材料不足时说明未核实，不推断无变化。',
+        ],
+        async run(input) {
+          if (!Number.isInteger(input.page) || input.page < 1) {
+            throw Object.assign(new Error('page 必须是正整数'), { code: 'invalid_input' })
+          }
+          if (!Number.isInteger(input['page-size']) || input['page-size'] < 1 || input['page-size'] > 100) {
+            throw Object.assign(new Error('page-size 必须是 1–100 的整数'), { code: 'invalid_input' })
+          }
+          return service.calendarApi.posts({
+            gameId: input.game,
+            page: input.page,
+            pageSize: input['page-size'],
+            type: input.type,
+          })
         },
       },
       {
@@ -110,15 +144,16 @@ export function registerGachaCommands(registry, service) {
     title: '二游前瞻',
     summary: '六款游戏、官方校正、周检与刷新边界',
     body: [
-      '命令：`schedule gacha list|refresh|apply-official|watch`（先看 `schedule gacha --help`）。',
+      '命令：`schedule gacha list|refresh|posts|apply-official|watch`（先看 `schedule gacha --help`）。',
       '',
       '范围：',
       '- 只维护原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环的「版本前瞻直播」条目。',
       '- 版本更新只保存为来源信息，不占用日历时间；不要为版本更新另建条目。',
-      '- 后台每 6 小时刷新；设置卡开关会移除该游戏由本插件写入的条目。',
+      '- gacha-calendar 服务后台每 6 小时采集；本插件每 6 小时读取格式化结果，设置卡开关会移除该游戏由本插件写入的条目。',
       '',
-      '查询与刷新：',
-      '- `list` 是状态摘要，不是官方证据；需要核实官方时间时使用可用检索工具查看各游戏 B 站官方账号。',
+      '查询、原文与刷新：',
+      '- `list` 是状态摘要，不是官方证据；需要核实官方时间时，先用 `posts` 读服务保存的公告/动态原文，再用可用检索工具与官方账号相互印证。',
+      '- `posts --game <id> --page <n> --page-size <n> [--type article]` 分页读取原始材料；只把清晰可核对的官方内容当作证据。',
       '- `refresh --game <id>` 立即刷新；刷新失败保留上次结果并报告错误，不推断无变化。',
       '- 不要用 `schedule entry` 替代刷新，也不要额外创建同一前瞻。',
       '',

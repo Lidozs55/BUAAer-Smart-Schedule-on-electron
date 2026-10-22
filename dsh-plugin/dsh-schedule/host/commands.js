@@ -6,7 +6,7 @@
  * --help` is the authoritative manual; the skill only tells the model how to
  * discover it.
  */
-import { PRIORITIES, TASK_TYPES } from './model.js'
+import { PRIORITIES, REMIND_LEAD_MAX_MINUTES, TASK_TYPES } from './model.js'
 import { dayOfWeek, termWeek } from './semester.js'
 
 const entryResult = (entry, termStart) => ({
@@ -27,9 +27,22 @@ const bool = (value, field) => {
   return value
 }
 
+/** `-1` clears a per-row override; otherwise 0–REMIND_LEAD_MAX_MINUTES minutes. */
+const remindLead = value => {
+  if (value === undefined) return undefined
+  if (value === -1) return null
+  if (!Number.isInteger(value) || value < 0 || value > REMIND_LEAD_MAX_MINUTES) {
+    throw Object.assign(
+      new Error(`remind-lead 须为 0–${REMIND_LEAD_MAX_MINUTES} 的整数分钟；-1 清除定制`),
+      { code: 'invalid_input' },
+    )
+  }
+  return value
+}
+
 const ENTRY_FIELDS = new Set([
   'title', 'description', 'location', 'lock', 'category',
-  'start', 'end', 'all-day', 'task-id',
+  'start', 'end', 'all-day', 'task-id', 'remind-lead',
 ])
 
 /** CLI option names (kebab-case) → service entry input. */
@@ -52,6 +65,7 @@ function entryInput(args, { extras = [] } = {}) {
   if (args.end !== undefined) input.end = text(args.end, 'end')
   if (args['all-day'] !== undefined) input.allDay = bool(args['all-day'], 'all-day')
   if (args['task-id'] !== undefined) input.taskId = text(args['task-id'], 'task-id')
+  if (args['remind-lead'] !== undefined) input.remindLead = remindLead(args['remind-lead'])
   return input
 }
 
@@ -65,6 +79,7 @@ function taskPatch(args) {
   if (args.priority !== undefined) patch.priority = text(args.priority, 'priority')
   if (args.completed !== undefined) patch.completed = bool(args.completed, 'completed')
   if (args['entry-id'] !== undefined) patch.entryId = text(args['entry-id'], 'entry-id')
+  if (args['remind-lead'] !== undefined) patch.remindLead = remindLead(args['remind-lead'])
   return patch
 }
 
@@ -94,6 +109,10 @@ const ENTRY_CREATE_OPTIONS = {
     description: '单日全天条目；start 传 YYYY-MM-DD，按日程服务的本地时区归一',
   },
   'task-id': { type: 'string', description: '关联任务 id，可省略；传空字符串解除' },
+  'remind-lead': {
+    type: 'integer',
+    description: `提醒提前分钟数（0=准时，1440=提前 1 天，最多 ${REMIND_LEAD_MAX_MINUTES}）；-1 清除定制恢复默认；省略=保持原值或用默认`,
+  },
 }
 
 const ENTRY_PATCH_OPTIONS = {
@@ -116,6 +135,7 @@ const ENTRY_NOTES = [
   '默认拒绝时间重叠；收到 ok=false + conflicts 时说明原因并询问用户，得到明确同意后才加 --allow-conflicts 重试。',
   '--allow-conflicts 只表示允许重叠，不是用户授权本身，也不会删除或覆盖已有条目。',
   '更新只传需要改变的字段；省略的字段保持原值。',
+  '--remind-lead 是单条提醒提前量（分钟）；-1 清除定制、跟随全局设定，通知仍依赖页面运行。',
 ]
 
 const TASK_NOTES = [
@@ -123,6 +143,7 @@ const TASK_NOTES = [
   'list 默认只含未完成项；查已完成必须加 --include-completed。',
   '完成不等于删除；--no-completed 可撤销完成。',
   '任务与条目的 task-id / entry-id 是独立字段，不会自动级联创建、完成或删除。',
+  '--remind-lead 是单条提醒提前量（分钟）；-1 清除定制、跟随全局设定，通知仍依赖页面运行。',
 ]
 
 export function registerCoreCommands(registry, service) {
@@ -235,7 +256,7 @@ export function registerCoreCommands(registry, service) {
           'schedule entry batch-create --input - --allow-conflicts',
         ],
         notes: [
-          '条目 JSON 每项字段：title/start/end/category/description/location/lock/all-day/task-id。',
+          '条目 JSON 每项字段：title/start/end/category/description/location/lock/all-day/task-id/remind-lead；remind-lead=-1 清除定制。',
           '读回执 okCount/total/results；成功项含完整 entry，失败项含 conflict 原因。',
           '仅重试失败项，不要重放成功项。批量不提供事务语义，部分成功是正常结果。',
         ],
@@ -321,6 +342,10 @@ export function registerCoreCommands(registry, service) {
           },
           description: { type: 'string', description: '备注，可省略' },
           'entry-id': { type: 'string', description: '关联的条目 id，可省略' },
+          'remind-lead': {
+            type: 'integer',
+            description: `提醒提前分钟数（0=准时，1440=提前 1 天，最多 ${REMIND_LEAD_MAX_MINUTES}）；-1 清除定制恢复默认；省略=用默认`,
+          },
         },
         examples: [
           'schedule task create --title "提交实验报告" --due 2026-10-24T23:59:00+08:00 --task-type homework --priority high',
@@ -347,6 +372,10 @@ export function registerCoreCommands(registry, service) {
           priority: { type: 'string', enum: PRIORITIES, description: '优先级' },
           completed: { type: 'boolean', description: '完成状态' },
           'entry-id': { type: 'string', description: '关联条目 id；传空字符串解除' },
+          'remind-lead': {
+            type: 'integer',
+            description: `提醒提前分钟数（0=准时，1440=提前 1 天，最多 ${REMIND_LEAD_MAX_MINUTES}）；-1 清除定制恢复默认；省略=保持原值`,
+          },
         },
         examples: ['schedule task update --id <id> --priority high', 'schedule task update --id <id> --entry-id ""'],
         notes: TASK_NOTES,
@@ -426,6 +455,7 @@ export function registerCoreCommands(registry, service) {
       '- 回执中的 week 是教学周（按条目开始时间自带时区的日期计算），dayOfWeek 为周一 1 至周日 7。week=null 时不编造周次。',
       '- 用户只给“第 N 周周几”时，用 termStart（第一周周一）定位：第 N 周周一 = 起点 + 7×(N−1) 天。未知 termStart 时先从一次 entry list 取；仍为空才询问。',
       '- 只创建用户明确给出的周次、日期与重复范围；无边界先确认。CLI 不创建周期规则，需要时把重复安排展开为具体日期后 batch-create。',
+      '- 提醒提前量用 --remind-lead（分钟，0–10080）；-1 清除单条定制并跟随全局；省略不改变原值。',
     ].join('\n'),
   })
 
@@ -440,8 +470,8 @@ export function registerCoreCommands(registry, service) {
       '```json',
       '{',
       '  "entries": [',
-      '    { "title": "课程 A", "start": "2026-10-24T08:00:00+08:00", "end": "2026-10-24T09:40:00+08:00", "category": "course", "location": "主 101", "lock": true },',
-      '    { "title": "校庆", "start": "2026-10-25", "all-day": true }',
+      '    { "title": "课程 A", "start": "2026-10-24T08:00:00+08:00", "end": "2026-10-24T09:40:00+08:00", "category": "course", "location": "主 101", "lock": true, "remind-lead": 30 },',
+      '    { "title": "校庆", "start": "2026-10-25", "all-day": true, "remind-lead": -1 }',
       '  ],',
       '  "allow-conflicts": false',
       '}',

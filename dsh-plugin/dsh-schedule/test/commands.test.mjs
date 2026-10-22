@@ -82,6 +82,38 @@ test('create and update echo persisted fields with response-only teaching labels
   assert.equal('dayOfWeek' in service.listEntries()[0], false)
 })
 
+test('entry and task remind-lead set, clear and batch overrides', async () => {
+  const { run } = fixture('2026-09-07')
+  const entry = await run(['entry', 'create'], input({ 'remind-lead': 60 }))
+  assert.equal(entry.remindLead, 60)
+  const clearedEntry = await run(['entry', 'update'], { id: entry.id, 'remind-lead': -1 })
+  assert.equal(clearedEntry.remindLead, null)
+
+  const batch = await run(['entry', 'batch-create'], {
+    entries: [input({
+      title: '批量提醒',
+      start: '2026-10-24T14:00:00+08:00',
+      end: '2026-10-24T16:00:00+08:00',
+      'remind-lead': 0,
+    })],
+  })
+  assert.equal(batch.results[0].entry.remindLead, 0)
+
+  const task = await run(['task', 'create'], {
+    title: '提醒任务',
+    due: '2026-10-25T23:59:00+08:00',
+    'remind-lead': 1440,
+  })
+  assert.equal(task.remindLead, 1440)
+  const clearedTask = await run(['task', 'update'], { id: task.id, 'remind-lead': -1 })
+  assert.equal(clearedTask.remindLead, null)
+
+  await assert.rejects(
+    run(['entry', 'create'], input({ 'remind-lead': 10081 })),
+    error => error.code === 'invalid_input' && /remind-lead/.test(error.message),
+  )
+})
+
 test('teaching week follows the explicit entry date and is null before/without term start', async () => {
   for (const [termStart, start, end, week, weekday] of [
     ['2026-09-07', '2026-09-06T23:30:00+08:00', '2026-09-06T23:45:00+08:00', null, 7],
@@ -229,6 +261,7 @@ test('catalog is public data and help surfaces commands, options and guides', ()
   assert.ok(entry.children.every(child => typeof child.run === 'undefined'))
   const create = entry.children.find(child => child.name === 'create')
   assert.equal(create.options.find(option => option.name === 'allow-conflicts').type, 'boolean')
+  assert.equal(create.options.find(option => option.name === 'remind-lead').type, 'integer')
   assert.ok(catalog.guides.some(guide => guide.name === 'workflow'))
   assert.ok(catalog.guides.every(guide => typeof guide.body === 'string' && guide.body.length > 0))
 })

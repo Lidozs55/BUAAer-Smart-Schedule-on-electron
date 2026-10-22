@@ -448,7 +448,9 @@ function parseCommandArgs(node, args) {
       if (negated) throw new CliError(`--no-${name} 只能用于布尔选项`, 'usage')
       if (inline === undefined) {
         const next = args[i + 1]
-        if (next === undefined || (next.startsWith('-') && next !== '-')) {
+        const negativeNumber = (option.type === 'number' || option.type === 'integer')
+          && typeof next === 'string' && /^-(?:\d|\.\d)/.test(next)
+        if (next === undefined || (next.startsWith('-') && next !== '-' && !negativeNumber)) {
           throw new CliError(`--${name} 缺少值`, 'usage')
         }
         value = next

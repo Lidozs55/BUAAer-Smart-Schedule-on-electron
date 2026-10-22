@@ -8,7 +8,7 @@ const core = { getSourceState: () => ({}), setSourceState: async () => {} }
 
 const serviceWith = schedule => createGachaService(
   { logger, get: name => name === 'schedule' ? schedule : undefined },
-  { service: core, bilibili: {} },
+  { service: core },
 )
 
 test('weekly watch can be disabled without a session id or automation bundle', async () => {

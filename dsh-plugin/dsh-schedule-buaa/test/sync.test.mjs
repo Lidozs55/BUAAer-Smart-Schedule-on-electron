@@ -150,8 +150,39 @@ test('both source adapters integrate with real core snapshot and generic entry A
   await runSync({ service, jw }, { password: 'test-only' })
   assert.deepEqual(service.listEntries().map(row => row.id).sort(), importedIds)
   assert.ok(service.listEntries().every(row => row.category === 'other'))
-  const bilibili = { articleList: async () => [], featureVideos: async () => [], searchVideos: async () => [], dynamics: async () => [] }
-  const gacha = createGachaService(ctx, { service, bilibili })
+  const prediction = () => ({
+    version: '9.9',
+    update: { utc: '2099-11-10T22:00:00Z', end_utc: '2099-11-11T03:00:00Z' },
+    preview: { utc: '2099-10-30T11:00:00Z', end_utc: '2099-10-30T12:30:00Z' },
+    update_confidence: 'official',
+    preview_confidence: 'official',
+  })
+  let livePrediction = prediction()
+  const calendarApi = {
+    games: async () => [{ id: 'hsr', status: 'ok', prediction: livePrediction }],
+    latestNotice: async () => null,
+    putOverride: async (gameId, payload) => {
+      const merged = structuredClone(livePrediction)
+      if (payload.update_start) {
+        merged.update = {
+          utc: payload.update_start,
+          end_utc: payload.update_end ?? merged.update.end_utc,
+        }
+      }
+      if (payload.preview_start) {
+        merged.preview = {
+          utc: payload.preview_start,
+          end_utc: payload.preview_end
+            ?? new Date(Date.parse(payload.preview_start) + 90 * 60_000).toISOString(),
+        }
+      }
+      if (payload.version) merged.version = payload.version
+      livePrediction = merged
+      return { data: { game: gameId } }
+    },
+    deleteOverride: async gameId => ({ data: { game: gameId, cleared: true } }),
+  }
+  const gacha = createGachaService(ctx, { service, calendarApi })
   try {
     await gacha.applyOfficial({ game: 'hsr', update_start: '2099-11-11T06:00:00+08:00', preview_start: '2099-10-30T19:00:00+08:00' })
     const preview = service.listEntries().find(row => row.source === 'gacha')

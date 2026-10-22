@@ -16,8 +16,8 @@
   row id `buaa-schedule`）——依赖核心注入的 `scheduleCore`，只拥有北航 SSO、
   教务同步与来源状态。
 - **二游前瞻来源** `dsh-plugin/dsh-schedule-gacha/`（`@lidozs55/dsh-schedule-gacha`，
-  row id `gacha-schedule`，见 `12`）——只读 B 站官方公告/视频，定时为六款游戏对账
-  前瞻直播条目；版本更新只保留在来源卡。
+  row id `gacha-schedule`，见 `12`）——读取 gacha-calendar 服务的格式化结果，定时为六款游戏
+  对账前瞻直播条目；版本更新只保留在来源卡。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
   见 `09`）——只依赖核心的提醒派生集与任务完成写面（气泡上的「已完成」）。
 
@@ -68,14 +68,13 @@ dsh-plugin/dsh-schedule-gacha/
 ├── index.js              # inject: ['scheduleCore', 'connection', 'scheduleCommands']；6 小时刷新
 ├── host/
 │   ├── games.js          # 六款游戏的 mid / 标题正则 / 默认窗口与节奏 / 条目归属标记
-│   ├── bilibili.js       # 串行限流、匿名 cookie、按端点 Referer、瞬时错误重试
-│   ├── parse.js          # 公告/视频/动态的纯规则解析与 planNext 推算
+│   ├── calendarApi.js    # gacha-calendar 服务 HTTP 客户端（games / posts / refresh / overrides）
 │   ├── state.js          # sourceState.gacha
-│   ├── service.js        # 摘要优先解析、条目对账、Agent 覆盖、周检登记
-│   ├── commands.js       # schedule gacha list/refresh/apply-official/watch + guide
+│   ├── service.js        # 服务视图映射、条目对账、官方覆盖转发、周检登记
+│   ├── commands.js       # schedule gacha list/refresh/posts/apply-official/watch + guide
 │   └── api.js            # /api/gacha-schedule（设置页通道）
 ├── client.js / client.settings.js  # 六款游戏开关 + 刷新 + Agent 核对入口
-└── test/parse.test.mjs   # 离线规则测试（node --test）
+└── test/                 # 服务映射、对账、周检与命令测试（node --test）
 ```
 
 数据流铁律：**一个操作只有一个实现**（核心服务方法）。来源插件通过
@@ -119,11 +118,13 @@ dsh-plugin/dsh-schedule-gacha/
 entries: { id, title, description: string|null, location: string|null,
            lock: boolean /*创建默认 false，仅限制左键快捷移动/缩放*/,
            source?: string|null, sourceKey?: string|null,
-           category /*§3.3*/, start, end, allDay?, taskId?, updatedAt }
+           category /*§3.3*/, start, end, allDay?, taskId?,
+           remindLead?: number|null /*0–10080 分钟；null/缺省跟随 Config 默认*/,
+           updatedAt }
 tasks: { id, title, description: string|null,
          taskType /*'homework'|'exam'|'lecture'|'other'*/, due,
          priority /*'high'|'medium'|'low'*/, completed, entryId: string|null,
-         source, updatedAt }
+         remindLead?: number|null, source, updatedAt }
 global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
           sourceState: {} /*来源 id → JSON 字符串*/,
           entryModelVersion: 2, categoryModelVersion: 1,
@@ -169,7 +170,7 @@ global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
 | 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
 | 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；命令扩展点用同一个 `ctx.provide('scheduleCommands', registry)`；桥走 `inject: ['scheduleCore']` |
 | Agent 传输 | 认证 loopback HTTP（随机端口 + bearer token + Host 校验），CLI 只转发注册命令树；不开放任意 service/route，也不让 CLI 直接打开数据库 |
-| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`，条目带 `kind: 'task'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
+| 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`（条目/任务的非空 `remindLead` 优先），条目带 `kind: 'task'|'entry'` 与确定性 `key`；不写 `ctx.schedule`、不建 Session、不触发 Agent。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。提醒无持久状态，domain 不存“是否已提醒” |
 | 冲突校验 | `createEntry/updateEntry/moveEntry/batchCreateEntries` 全量内置重叠检测（所有普通条目统一参与）；默认拒绝并返回可行动原因，`allowConflicts=true`（CLI `--allow-conflicts` / UI 确认框）放行 |
 | "24h 内到期"条 | 核心插件 `UpcomingStrip` 纯读展示；提醒子系统不依赖它 |
 
@@ -256,9 +257,9 @@ CLI server 只做参数校验与分发，不提供任意 service/route 透传；
 `sourceState.buaa = { buaaId, termCode }` 仅供显示。密码只经 `--password-stdin` 或
 `--password-env` 进入当次调用，不作为普通命令行参数。
 
-**二游前瞻来源插件**：CLI 命名空间 `schedule gacha list|refresh|apply-official|watch`；
-客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。只读 B 站
-官方公告/视频，为原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环各维护
+**二游前瞻来源插件**：CLI 命名空间 `schedule gacha list|refresh|posts|apply-official|watch`；
+客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。读取
+gacha-calendar 服务（B 站采集/解析/推算在服务端）的格式化结果，为原神、崩坏：星穹铁道、绝区零、鸣潮、明日方舟：终末地、异环各维护
 前瞻直播条目（推算 `lock=false`，官方明确时刻 `lock=true`）；版本更新只在来源卡显示。条目带来源归属，只删改本源条目，不触碰其他来源或用户手建日程。`sourceState.gacha` 存上次公告 id、解析结果、开关与周检登记；
 后台每 6 小时刷新（`ctx.timer`，缺失时只停自动刷新，命令与设置卡仍可用）。开启 `watch` 需要
 当前会话 id（`--session`、`SCHEDULE_SESSION_ID` 或 `DSH_SESSION_ID`）来登记自动化周检；`watch --no-enabled` 关闭无需 id。

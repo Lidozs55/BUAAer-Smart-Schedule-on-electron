@@ -48,7 +48,8 @@ test('entry remindLead overrides both tier defaults, null falls back', () => {
   assert.equal(Date.parse(fallback.at), Date.parse(iso(300)) - 15 * 60_000)
 })
 
-test('task remindLead overrides the config tier while unset rows keep it', () => {
+test('task remindLead overrides the config tier while unset rows keep it', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: NOW })
   const service = {
     listTasks: () => [
       { id: 't1', title: '作业', taskType: 'homework', due: iso(2880), remindLead: 120 },

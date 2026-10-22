@@ -164,7 +164,7 @@ update(key: K, fn: (current: V) => V): Promise<V>
 | 类别迁移版本 | `global.categoryModelVersion` | 当前为 `1`，与 `entryModelVersion: 2` 独立 |
 | 学期第一周周一 | `global.termStart` | 用于教学周标签与导入时日期换算，不在读取时扩展安排 |
 | 学号、公告版本等来源私有状态 | `global.sourceState.<source>` | 核心只存 JSON；密码、Cookie jar 不持久化 |
-| 提醒提前量 | 插件 `Config` | 任务与条目两类；不保存“是否提醒”业务字段 |
+| 提醒提前量 | 插件 `Config` + `entries/tasks.remindLead` | 全局四档默认；`remindLead` 为可空分钟覆盖（0–10080，null 跟随默认）；不保存“是否提醒”业务字段 |
 
 设计要点：
 

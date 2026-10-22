@@ -40,7 +40,7 @@
 | `host/commands.js` | CLI 命名空间 `schedule gacha list/refresh/posts/apply-official/watch` + guide |
 | `host/api.js` | `/api/gacha-schedule`（设置卡读状态、开关、立即刷新） |
 | `client.js` / `client.settings.js` | 注册 `schedule.settings.blocks` 卡片，复用核心 `bsch-*` 样式 |
-| `test/service.test.mjs` | 离线映射/对账/校正转发测试（不联网） |
+| `test/` | 离线映射/对账/校正转发、周检与 CLI `posts` 测试（不联网） |
 
 服务端点与配置：默认 `https://gacha.modenc.top`；可用
 `globalThis.__GACHA_CALENDAR__ = { baseUrl, token }` 覆写（`token` 为管理令牌，
@@ -144,7 +144,7 @@ Agent 官方校正是**转发**：`schedule gacha apply-official` 本地校验�
 离线：
 
 ```
-node --test dsh-plugin/dsh-schedule-gacha/test/service.test.mjs
+node --test dsh-plugin/dsh-schedule-gacha/test/*.test.mjs
 ```
 
 覆盖服务视图映射（UTC → `+08:00`）、对账、锁定与可编辑字段保留、
