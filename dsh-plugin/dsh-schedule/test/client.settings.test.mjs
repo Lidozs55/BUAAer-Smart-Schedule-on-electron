@@ -123,3 +123,58 @@ test('import with exportedAt refreshes category metadata', async () => {
   assert.ok(calls >= 2)
   assert.ok(find(tree, n => n.type === 'input' && n.props.type === 'color' && n.props.value === '#AABBCC'))
 })
+
+test('settings omit read-only notification status and never query browser permission', async () => {
+  const app = await harness(), Settings = app.module('settings').SettingsSection
+  app.module('notify').notificationStatus = () => { throw new Error('Settings must not query notification permission') }
+  const tree = app.render(Settings, propsWith(snapshotApi(categories)))
+  assert.equal(find(tree, n => n.props['aria-labelledby'] === 'bsch-notify-heading'), undefined)
+  assert.equal(find(tree, n => n.children.some(c => typeof c === 'string' && c.startsWith('settings.notify'))), undefined)
+})
+
+test('core settings share semantic section headings and an explicitly labelled term field', async () => {
+  const app = await harness(), Settings = app.module('settings').SettingsSection
+  const api = snapshotApi(categories)
+  let tree = app.render(Settings, propsWith(api))
+  await new Promise(resolve => setImmediate(resolve))
+  tree = app.render(Settings, propsWith(api))
+  const sections = nodes(tree).filter(n => n.type === 'section')
+  assert.equal(sections.length, 3)
+  for (const section of sections) {
+    assert.ok(section.props.className.includes('bsch-settings-section'))
+    const heading = find(section, n => n.type === 'h3')
+    assert.equal(heading.props.className, 'bsch-settings-heading')
+    assert.equal(heading.props.id, section.props['aria-labelledby'])
+  }
+  const term = find(tree, n => n.type === 'input' && n.props.type === 'date')
+  assert.ok(find(tree, n => n.type === 'label' && n.props.htmlFor === term.props.id))
+  assert.ok(find(tree, n => n.props.id === term.props['aria-describedby']))
+})
+
+test('backup import uses a keyboard-accessible button and clearing still requires confirmation', async () => {
+  const app = await harness(), Settings = app.module('settings').SettingsSection
+  let picked = 0, cleared = 0
+  const api = { ...snapshotApi(categories), clearAllData: async () => { cleared++; return { deleted: 0 } } }
+  let tree = app.render(Settings, propsWith(api))
+  await new Promise(resolve => setImmediate(resolve))
+  tree = app.render(Settings, propsWith(api))
+  const upload = find(tree, n => n.type === 'input' && n.props.type === 'file')
+  assert.equal(upload.props.hidden, true)
+  upload.props.ref.current = { click() { picked++ } }
+  find(tree, n => n.type === 'button' && n.children.includes('settings.import')).props.onClick()
+  assert.equal(picked, 1)
+  const danger = find(tree, n => n.props.className === 'bsch-settings-danger')
+  const copy = find(danger, n => n.props.className === 'bsch-settings-danger-copy')
+  const clear = find(danger, n => n.type === 'button' && n.children.includes('settings.clearAllConfirm'))
+  assert.ok(copy)
+  assert.ok(danger.children.includes(copy) && danger.children.includes(clear), 'copy and action are siblings, not a form row')
+  assert.ok(find(copy, n => n.props.id === clear.props['aria-describedby']))
+  clear.props.onClick()
+  assert.equal(cleared, 0)
+  tree = app.render(Settings, propsWith(api))
+  const dialog = find(tree, n => n.props.confirmLabel === 'settings.clearAllConfirm')
+  assert.equal(dialog.props.message, 'settings.clearAllHint')
+  dialog.props.onConfirm()
+  await new Promise(resolve => setImmediate(resolve))
+  assert.equal(cleared, 1)
+})

@@ -58,7 +58,7 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'settings.title': '二游前瞻',
-      'settings.hint': '自动跟踪六款游戏的版本信息；仅前瞻直播写入日程，版本更新只作来源信息。推算时间可编辑，官方明确时间锁定拖动。',
+      'settings.hint': '仅前瞻直播加入日程，推算的前瞻时间可调整。',
       'settings.disabled': '已关闭，不写入日程',
       'settings.waiting': '等待首次刷新…',
       'settings.unknown': '待定',
@@ -67,12 +67,12 @@ window.__ModuleLoader__.load({
       'settings.refresh': '立即刷新',
       'settings.refreshing': '刷新中…',
       'settings.started': '已开始刷新，稍候…',
-      'settings.agent': '让 Agent 核对',
+      'settings.agent': 'Agent 核对',
       'settings.last': '上次刷新：{time}',
       'settings.never': '尚未刷新',
-      'settings.auto': '后台每 6 小时自动刷新；关闭开关会移除该游戏由本插件写入的日程。',
-      'settings.watchOn': '周检已开启（每周三 10:00 由 Agent 核对）',
-      'settings.watchOff': '周检未开启（需「自动化任务」bundle）',
+      'settings.auto': '每 6 小时刷新；关闭游戏会移除其前瞻日程。',
+      'settings.watchOn': '周检：每周三 10:00（北京时间）',
+      'settings.watchOff': '周检未开启',
       'settings.error': '刷新失败：{message}',
       'settings.notice': '公告',
       'settings.agentPrompt': [
@@ -85,7 +85,7 @@ window.__ModuleLoader__.load({
 
     const en = {
       'settings.title': 'Gacha previews',
-      'settings.hint': 'Tracks six games; only preview streams enter the calendar. Updates stay source information. Inferred times are editable; explicit official times lock dragging.',
+      'settings.hint': 'Only preview streams enter the calendar. Estimated preview times are editable.',
       'settings.disabled': 'Off — no entries',
       'settings.waiting': 'Waiting for the first refresh…',
       'settings.unknown': 'TBD',
@@ -94,12 +94,12 @@ window.__ModuleLoader__.load({
       'settings.refresh': 'Refresh now',
       'settings.refreshing': 'Refreshing…',
       'settings.started': 'Refresh started…',
-      'settings.agent': 'Ask an Agent to verify',
+      'settings.agent': 'Verify with Agent',
       'settings.last': 'Last refresh: {time}',
       'settings.never': 'never',
-      'settings.auto': 'Refreshes every 6 hours in the background; turning a game off removes the entries this plugin wrote for it.',
-      'settings.watchOn': 'Weekly check on (Wednesdays 10:00 by an Agent)',
-      'settings.watchOff': 'Weekly check off (needs the “automation” bundle)',
+      'settings.auto': 'Refreshes every 6 hours. Turning a game off removes its previews.',
+      'settings.watchOn': 'Weekly check: Wednesdays 10:00 (UTC+8)',
+      'settings.watchOff': 'Weekly check off',
       'settings.error': 'Refresh failed: {message}',
       'settings.notice': 'notice',
       'settings.agentPrompt': [
@@ -221,56 +221,37 @@ window.__ModuleLoader__.load({
         ? t('settings.never')
         : short(state.lastRefreshAt)
 
-      return h('div', { className: 'bsch-card' },
-        h('h3', null, t('settings.title')),
+      return h('section', { className: 'bsch-settings-section', 'aria-labelledby': 'bsch-gacha-heading' },
+        h('h3', { className: 'bsch-settings-heading', id: 'bsch-gacha-heading' }, t('settings.title')),
         h('div', { className: 'bsch-hint' }, t('settings.hint')),
-        h('div', null, ...games.map(game => h('div', { className: 'bsch-rowline', key: game.id },
-          h('label', {
-            style: {
-              display: 'flex', alignItems: 'center', gap: '6px',
-              minWidth: '170px', cursor: busy ? 'default' : 'pointer',
-            },
-          },
-          h('input', {
-            type: 'checkbox',
-            checked: game.enabled,
-            disabled: busy,
-            onChange: () => void toggle(game),
-          }),
-          h('span', null, game.name)),
-          h('span', {
-            className: `bsch-hint${game.enabled && game.status === 'error' ? ' bsch-error' : ''}`,
-            title: game.lastError ?? '',
-            style: { flex: 1 },
-          },
-          detail(t, game),
-          game.article?.url
-            ? h('a', {
-              href: game.article.url,
-              target: '_blank',
-              rel: 'noreferrer',
-              style: { marginLeft: '6px' },
-            }, t('settings.notice'))
-            : null)))),
-        h('div', { className: 'bsch-rowline' },
-          h('button', {
-            className: 'bsch-btn',
-            disabled: busy || state?.refreshing === true,
-            onClick: () => void refreshAll(),
-          }, state?.refreshing === true ? t('settings.refreshing') : t('settings.refresh')),
-          h('span', { className: 'bsch-spacer' }),
-          h('button', {
-            className: 'bsch-btn is-primary',
-            disabled: busy,
-            onClick: () => void openAgent(),
-          }, t('settings.agent'))),
+        h('div', { className: 'bsch-settings-games' }, ...games.map(game => h('div', { className: 'bsch-setting-row', key: game.id },
+          h('label', { className: 'bsch-setting-toggle' },
+            h('input', {
+              type: 'checkbox', checked: game.enabled, disabled: busy, onChange: () => void toggle(game),
+            }), h('span', null, game.name)),
+          h('div', { className: 'bsch-setting-control' },
+            h('span', {
+              className: `bsch-hint${game.enabled && game.status === 'error' ? ' bsch-error' : ''}`,
+              title: game.lastError ?? '',
+            }, detail(t, game),
+            game.article?.url ? h('a', {
+              className: 'bsch-settings-link', href: game.article.url, target: '_blank', rel: 'noreferrer',
+              'aria-label': `${game.name} · ${t('settings.notice')}`,
+            }, t('settings.notice')) : null))))),
         h('div', { className: 'bsch-hint' }, t('settings.auto')),
-        h('div', { className: 'bsch-hint' },
-          `${t('settings.last').replace('{time}', last)} · `
-          + (state?.watch?.enabled ? t('settings.watchOn') : t('settings.watchOff'))),
-        status !== null
-          ? h('div', { className: `bsch-hint${status.ok ? '' : ' bsch-error'}` }, status.text)
-          : null)
+        h('div', { className: 'bsch-settings-meta' },
+          h('span', null, t('settings.last').replace('{time}', last)),
+          h('span', null, state?.watch?.enabled ? t('settings.watchOn') : t('settings.watchOff'))),
+        h('div', { className: 'bsch-settings-actions' },
+          h('button', {
+            className: 'bsch-btn', disabled: busy, onClick: () => void openAgent(),
+          }, t('settings.agent')),
+          h('button', {
+            className: 'bsch-btn is-primary', disabled: busy || state?.refreshing === true, onClick: () => void refreshAll(),
+          }, state?.refreshing === true ? t('settings.refreshing') : t('settings.refresh'))),
+        status !== null ? h('div', {
+          role: status.ok ? 'status' : 'alert', className: `bsch-hint bsch-settings-status${status.ok ? '' : ' bsch-error'}`,
+        }, status.text) : null)
     }
 
     return { SettingsSection, zh, en }
