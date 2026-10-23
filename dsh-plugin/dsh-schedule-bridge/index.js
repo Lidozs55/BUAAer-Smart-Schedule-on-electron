@@ -19,7 +19,7 @@
  *      (`vivarium.tasks.report`, contract §4c). The BASE derives the pet
  *      semantics (`tasks.overdue` worry edge, `tasks.clear` celebration), so
  *      every species reacts by binding base signals — none of them ever
- *      parses this bridge's payloads (ADR-013). `sched.data.changed` stays
+ *      parses this bridge's payloads (vivarium contract §4c). `sched.data.changed` stays
  *      as a raw observability signal with no pet semantics.
  *   3. Pet drops — text and/or images dragged onto the pet
  *      (`vivarium.drops.onDrop`, §4d) are staged in the schedule core's
@@ -27,6 +27,12 @@
  *      the row confirmed and the schedule client opens a new Agent session
  *      directly (no clipboard step). The bridge never parses text or OCRs
  *      images (no LLM call, no task guess).
+ *   4. Session answers — for a while after a drop session is delivered, the
+ *      session's `user-questions/request` / `approval/request` waterfalls are
+ *      claimed (prepended, ahead of the platform UI forwarder) and surfaced
+ *      as pet bubbles; a tap is returned as the answer, an expired bubble
+ *      delegates back to the session UI. The prompt contract (two-option
+ *      yes/no questions) keeps those bubbles answerable from the pet.
  *
  * Host-only bundle: no client half, no UI, no data copy. Missing vivarium
  * or missing main plugin ⇒ cordis parks this bundle — the main plugin's

@@ -29,6 +29,9 @@ function harness(options = {}) {
     completed: [],
     dropsHandler: undefined,
     textHandler: undefined,
+    events: new Map(),
+    eventOptions: [],
+    deliveredListeners: [],
   }
 
   const service = {
@@ -76,6 +79,13 @@ function harness(options = {}) {
         state.discarded.push(id)
         return true
       },
+      onDelivered(listener) {
+        state.deliveredListeners.push(listener)
+        return () => {
+          const index = state.deliveredListeners.indexOf(listener)
+          if (index >= 0) state.deliveredListeners.splice(index, 1)
+        }
+      },
     },
     ...options.service,
   }
@@ -98,8 +108,9 @@ function harness(options = {}) {
         state.notices.push(request)
         return { ok: true, id: request.id }
       },
-      settled() {
-        return Promise.resolve(options.outcome ?? 'ack')
+      settled(id) {
+        const outcomes = options.settled ?? {}
+        return Promise.resolve(outcomes[id] ?? options.outcome ?? 'ack')
       },
     },
     drops: {
@@ -130,6 +141,13 @@ function harness(options = {}) {
       const dispose = fn()
       if (typeof dispose === 'function') state.cleanups.push(dispose)
     },
+    on(name, listener, listenerOptions) {
+      state.events.set(name, listener)
+      state.eventOptions.push({ name, ...listenerOptions })
+      return () => {
+        state.events.delete(name)
+      }
+    },
   }
 
   const config = {
@@ -150,8 +168,22 @@ function harness(options = {}) {
         state.dropsHandler(value)
         return
       }
-      assert.equal(typeof state.textHandler, 'function', 'drop handler must be registered')
+      assert.equal(typeof state.textHandler === 'function', true, 'drop handler must be registered')
       state.textHandler(value.text)
+    },
+    deliver(sessionId) {
+      for (const listener of [...state.deliveredListeners]) listener(sessionId)
+    },
+    /** Invoke one registered waterfall listener; `delegated` tells whether it passed on. */
+    ask(name, request) {
+      const listener = state.events.get(name)
+      assert.equal(typeof listener === 'function', true, `listener ${name} must be registered`)
+      let delegated = false
+      const result = listener(request, async () => {
+        delegated = true
+        return 'delegated'
+      })
+      return Promise.resolve(result).then(value => ({ value, delegated }))
     },
     fireTimer(ms) {
       for (const timer of state.timers.filter(candidate => candidate.ms === ms)) timer.fn()
@@ -362,4 +394,147 @@ test('effect cleanup detaches the drop subscriber', () => {
   assert.equal(typeof h.state.dropsHandler, 'function')
   h.cleanup()
   assert.equal(h.state.dropsHandler, undefined)
+})
+
+// -- session question relay (docs 09 §2.4) ------------------------------------
+
+const question = (request = {}, item = {}) => ({
+  agent: { session: 'sess-1' },
+  questions: [{
+    id: 'when',
+    question: '安排在 10 月 24 日 14:00，可以吗？',
+    options: [{ label: '可以' }, { label: '不合适' }],
+  }],
+  ...request,
+  ...(Object.keys(item).length === 0 ? {} : { questions: [{
+    id: 'when',
+    question: '安排在 10 月 24 日 14:00，可以吗？',
+    options: [{ label: '可以' }, { label: '不合适' }],
+    ...item,
+  }] }),
+})
+
+test("a delivered session's two-option question is claimed and answered from the pet", async () => {
+  const h = harness({ settled: { 'sched-ask-1': 'confirm' } })
+  h.deliver('sess-1')
+  const { value, delegated } = await h.ask('user-questions/request', question())
+  assert.equal(delegated, false)
+  assert.deepEqual(value, { answers: [{ id: 'when', selected: ['可以'] }] })
+  const notice = h.state.notices.at(-1)
+  assert.equal(notice.source, 'schedule-bridge')
+  assert.equal(notice.ttlMs, 60_000)
+  assert.match(notice.text, /10 月 24 日 14:00/)
+  // The buttons carry the question's own option labels; the ids stay the
+  // base's confirm/deny pair so species postures still fire.
+  assert.deepEqual(notice.actions.map(action => action.id), ['confirm', 'deny'])
+  assert.deepEqual(notice.actions.map(action => action.label.zh), ['可以', '不合适'])
+})
+
+test('tapping the second option answers with that label, not a guessed no', async () => {
+  const h = harness({ settled: { 'sched-ask-1': 'deny' } })
+  h.deliver('sess-1')
+  const { value, delegated } = await h.ask('user-questions/request', question())
+  assert.equal(delegated, false)
+  assert.deepEqual(value, { answers: [{ id: 'when', selected: ['不合适'] }] })
+})
+
+test('an unanswered question bubble delegates to the session UI', async () => {
+  const h = harness({ settled: { 'sched-ask-1': 'expired' } })
+  h.deliver('sess-1')
+  const { value, delegated } = await h.ask('user-questions/request', question())
+  assert.equal(delegated, true)
+  assert.equal(value, 'delegated')
+  assert.equal(h.state.notices.length, 1) // the ask did surface on the pet first
+})
+
+test('sessions that were never delivered (or whose watch lapsed) are not claimed', async () => {
+  const h = harness()
+  const stranger = await h.ask('user-questions/request', question({ agent: { session: 'sess-x' } }))
+  assert.equal(stranger.delegated, true)
+  assert.equal(h.state.notices.length, 0)
+
+  const realNow = Date.now
+  try {
+    h.deliver('sess-1')
+    Date.now = () => realNow() + 11 * 60_000
+    const lapsed = await h.ask('user-questions/request', question())
+    assert.equal(lapsed.delegated, true)
+    assert.equal(h.state.notices.length, 0)
+  } finally {
+    Date.now = realNow
+  }
+})
+
+test('question shapes the pet cannot answer are delegated, not claimed', async () => {
+  const h = harness()
+  h.deliver('sess-1')
+  const shapes = [
+    question({ questions: [
+      { id: 'a', question: '一', options: [{ label: 'x' }, { label: 'y' }] },
+      { id: 'b', question: '二', options: [{ label: 'x' }, { label: 'y' }] },
+    ] }),
+    question({}, { options: undefined }),
+    question({}, { options: [{ label: '1' }, { label: '2' }, { label: '3' }] }),
+    question({}, { multiSelect: true }),
+    question({ agent: undefined }),
+  ]
+  for (const shape of shapes) {
+    const { delegated } = await h.ask('user-questions/request', shape)
+    assert.equal(delegated, true)
+  }
+  assert.equal(h.state.notices.length, 0)
+})
+
+test("a delivered session's approval is claimed: allow on confirm, reject on deny", async () => {
+  const allowed = harness({ settled: { 'sched-ask-1': 'confirm' } })
+  allowed.deliver('sess-1')
+  const yes = await allowed.ask('approval/request', {
+    agent: { session: 'sess-1' }, toolName: 'run', reason: 'schedule entry create',
+  })
+  assert.deepEqual(yes, { value: 'allowed-once', delegated: false })
+  assert.match(allowed.state.notices.at(-1).text, /schedule entry create/)
+
+  const denied = harness({ settled: { 'sched-ask-1': 'deny' } })
+  denied.deliver('sess-1')
+  const no = await denied.ask('approval/request', { agent: { session: 'sess-1' }, toolName: 'run' })
+  assert.deepEqual(no, { value: 'rejected', delegated: false })
+})
+
+test('an unanswered approval bubble delegates to the session UI', async () => {
+  const h = harness({ settled: { 'sched-ask-1': 'expired' } })
+  h.deliver('sess-1')
+  const { value, delegated } = await h.ask('approval/request', {
+    agent: { session: 'sess-1' }, toolName: 'run',
+  })
+  assert.equal(delegated, true)
+  assert.equal(value, 'delegated')
+})
+
+test('an old core without dropbox.onDelivered keeps drops but warns about the relay', () => {
+  const h = harness({ service: { dropbox: {
+    stage: raw => ({ id: raw?.text ?? 'x', ...raw }),
+    confirm: () => true,
+    discard: () => true,
+  } } })
+  assert.equal(typeof h.state.dropsHandler === 'function', true)
+  assert.deepEqual([...h.state.events.keys()], [])
+  assert.match(h.state.warnings.join('\n'), /dropbox\.onDelivered/)
+})
+
+test('relay listeners are prepended and detached on cleanup', () => {
+  const h = harness()
+  assert.equal(h.state.eventOptions.length, 2)
+  assert.deepEqual(h.state.eventOptions.map(option => option.prepend), [true, true])
+  h.cleanup()
+  assert.deepEqual([...h.state.events.keys()], [])
+})
+
+test('a notice post failure delegates instead of holding the request', async () => {
+  const h = harness({ vivarium: { notices: {
+    post: () => { throw new Error('bubble gone') },
+    settled: () => Promise.resolve('confirm'),
+  } } })
+  h.deliver('sess-1')
+  const { delegated } = await h.ask('user-questions/request', question())
+  assert.equal(delegated, true)
 })

@@ -89,3 +89,41 @@ test('unanswered pending rows expire; confirmed rows do not', () => {
   assert.deepEqual(dropbox.list().map(row => row.id), [confirmed.id])
   assert.equal(dropbox.confirm(pending.id), false)
 })
+
+test('ack with a sessionId announces the hand-off; without one it stays silent', () => {
+  const dropbox = box()
+  const delivered = []
+  const off = dropbox.onDelivered(sessionId => delivered.push(sessionId))
+  const row = dropbox.stage('交给会话')
+  dropbox.confirm(row.id)
+
+  assert.equal(dropbox.ack([row.id]), 1, 'ack still removes the row without a session')
+  assert.deepEqual(delivered, [])
+
+  const second = dropbox.stage('再交一个')
+  dropbox.confirm(second.id)
+  assert.equal(dropbox.ack([second.id], 'sess-9'), 1)
+  assert.deepEqual(delivered, ['sess-9'])
+
+  // No row removed ⇒ no announcement, even with a sessionId.
+  assert.equal(dropbox.ack(['missing'], 'sess-10'), 0)
+  assert.deepEqual(delivered, ['sess-9'])
+
+  off()
+  const third = dropbox.stage('无人监听')
+  dropbox.confirm(third.id)
+  dropbox.ack([third.id], 'sess-11')
+  assert.deepEqual(delivered, ['sess-9'])
+})
+
+test('a throwing onDelivered listener cannot break the ack', () => {
+  const dropbox = box()
+  const heard = []
+  dropbox.onDelivered(() => { throw new Error('listener gone') })
+  dropbox.onDelivered(sessionId => heard.push(sessionId))
+  const row = dropbox.stage('隔离')
+  dropbox.confirm(row.id)
+  assert.equal(dropbox.ack([row.id], 'sess-1'), 1)
+  assert.deepEqual(heard, ['sess-1'])
+  assert.deepEqual(dropbox.list(), [])
+})

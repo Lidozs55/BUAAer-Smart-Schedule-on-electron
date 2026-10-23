@@ -292,8 +292,12 @@ window.__ModuleLoader__.load({
         clearAllData: () => post('clearAllData', {}),
         /** Confirmed pet drops (vivarium bridge); the client opens a session. */
         listConfirmedDrops: () => post('listConfirmedDrops', {}),
-        /** Remove delivered rows after the prompt is accepted. */
-        ackDrops: ids => post('ackDrops', { ids }),
+        /**
+         * Remove delivered rows after the prompt is accepted. `sessionId`
+         * tells the host which Agent session got the material, so the pet
+         * bridge can follow that session's questions.
+         */
+        ackDrops: (ids, sessionId) => post('ackDrops', { ids, sessionId }),
       }
     }
 

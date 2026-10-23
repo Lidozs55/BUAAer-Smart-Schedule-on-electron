@@ -13,7 +13,10 @@
  * The bridge marks it `confirmed` on 「确认」 and discards it on 「取消」,
  * expiry or dismissal. The client only ever sees confirmed rows and acks
  * them after the session prompt is accepted, so a transient client failure
- * can retry without silently losing the material.
+ * can retry without silently losing the material. The ack may carry the
+ * sessionId the row was delivered to; `onDelivered` listeners (the pet
+ * bridge uses this to follow the session's questions) hear it once per
+ * hand-off.
  *
  * Keeping it in its own module makes the ownership explicit: the bridge does
  * not own UI state, the domain service does not own a transport queue, and
@@ -83,6 +86,17 @@ const cloneRow = (row) => ({
  */
 export function createDropbox({ now = () => new Date().toISOString(), uuid = randomUUID } = {}) {
   let rows = []
+  const deliveredListeners = new Set()
+
+  const notifyDelivered = (sessionId) => {
+    for (const listener of [...deliveredListeners]) {
+      try {
+        listener(sessionId)
+      } catch {
+        // A listener's crash must not break the ack that triggered it.
+      }
+    }
+  }
 
   const prune = () => {
     const cutoff = Date.parse(now()) - DROP_PENDING_TTL_MS
@@ -135,12 +149,27 @@ export function createDropbox({ now = () => new Date().toISOString(), uuid = ran
       return rows.filter(row => row.confirmedAt !== undefined).map(cloneRow)
     },
 
+    /**
+     * Hear which Agent session a row was delivered to. Fired from `ack`
+     * calls that carry a sessionId — the transport's fact, not a promise
+     * that the session is still alive.
+     */
+    onDelivered(listener) {
+      deliveredListeners.add(listener)
+      return () => {
+        deliveredListeners.delete(listener)
+      }
+    },
+
     /** Remove delivered rows after the client accepted the prompt. */
-    ack(ids) {
+    ack(ids, sessionId) {
       if (!Array.isArray(ids)) return 0
       const remove = new Set(ids.filter(id => typeof id === 'string' && id !== ''))
       const before = rows.length
       rows = rows.filter(row => !remove.has(row.id))
+      if (typeof sessionId === 'string' && sessionId !== '' && rows.length !== before) {
+        notifyDelivered(sessionId)
+      }
       return before - rows.length
     },
 

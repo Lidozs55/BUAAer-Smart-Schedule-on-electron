@@ -40,8 +40,12 @@ function operations(service) {
     clearAllData: () => service.clearAllData(),
     /** Confirmed pet drops awaiting a client session hand-off (vivarium §4d). */
     listConfirmedDrops: () => service.dropbox.listConfirmed(),
-    /** Acknowledge delivered rows so the client never prompts the same drop twice. */
-    ackDrops: body => service.dropbox.ack(body.ids),
+    /**
+     * Acknowledge delivered rows so the client never prompts the same drop
+     * twice. `sessionId` names the Agent session the rows were delivered to;
+     * the pet bridge follows that session's questions (docs 09 §2.4).
+     */
+    ackDrops: body => service.dropbox.ack(body.ids, body.sessionId),
     setMeta: body => service.setMeta(body.patch),
     setCategories: body => service.setCategories(body.categories),
     /** Full-domain dump — the importable counterpart of the settings export. */
