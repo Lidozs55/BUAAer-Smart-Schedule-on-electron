@@ -8,6 +8,27 @@ import { createGachaService } from '../../dsh-schedule-gacha/host/service.js'
 const cell = (extra = {}) => ({ courseName: '数学', dayOfWeek: 2, beginTime: '08:00', endTime: '09:35', placeName: 'A101', weeksAndTeachers: '1-3周(单)[理论]/张老师[主讲]', ...extra })
 const payload = (...items) => ({ datas: { code: '23370001', arrangedList: items, practiceList: [] } })
 const exam = (extra = {}) => ({ courseName: '数学', examDate: '2026-11-10 00:00:00', startTime: '14:00', endTime: '16:00', examPlace: 'B202', examSeatNo: '12', ...extra })
+const assignment = (extra = {}) => ({
+  assignmentId: 'a1',
+  courseId: 'c1',
+  courseName: '数学',
+  teacherName: '张老师',
+  title: '第三章习题',
+  start: '2026-10-20T00:00:00.000Z',
+  due: '2026-10-30T15:59:00.000Z',
+  score: '100',
+  status: 'unsubmitted',
+  statusText: '未提交',
+  ...extra,
+})
+const spocFeed = (assignments, extra = {}) => ({
+  termCode: '2026-2027-1',
+  termName: '2026-2027 秋季学期',
+  assignments,
+  submitted: 0,
+  skipped: 0,
+  ...extra,
+})
 
 function harness({ schedule = payload(cell()), exams = [exam()], failure } = {}) {
   const entries = new Map()
@@ -40,7 +61,11 @@ function harness({ schedule = payload(cell()), exams = [exam()], failure } = {})
     deleteTask: async id => { tasks.delete(id) },
   }
   const jw = { ssoLogin: async () => ({}), fetchSchedule: async () => schedule, fetchExams: async () => { if (failure) throw failure; return { datas: exams } } }
-  return { service, jw, entries, tasks, states, calls, sync: () => runSync({ service, jw }, { password: 'test-only' }) }
+  return { service, jw, entries, tasks, states, calls, sync: (spoc, signin) => runSync({
+    service, jw,
+    ...(spoc === undefined ? {} : { spoc }),
+    ...(signin === undefined ? {} : { signin }),
+  }, { password: 'test-only' }) }
 }
 
 test('explicit dates cover only upstream odd weeks and multi-teacher week groups, without teacher fields', () => {
@@ -207,4 +232,164 @@ test('matching manual exam task retains user fields while due is corrected', asy
   assert.equal(h.tasks.size, 1)
   assert.equal(h.tasks.get('manual').due, '2026-11-10T14:00:00+08:00')
   assert.equal(h.tasks.get('manual').description, '我的笔记'); assert.equal(h.tasks.get('manual').priority, 'low')
+})
+
+test('SPOC runs after the JW snapshot and creates homework tasks from the same login', async () => {
+  const h = harness()
+  let seen
+  const spoc = {
+    fetchAssignments: async credentials => {
+      seen = credentials
+      return spocFeed([assignment()], { submitted: 2 })
+    },
+  }
+  const result = await h.sync(spoc)
+
+  assert.equal(result.entries.total, 3)
+  assert.equal(result.spoc.created, 1)
+  assert.equal(result.spoc.submitted, 2)
+  assert.equal(result.spoc.termCode, '2026-2027-1')
+  assert.equal(seen.username, '23370001')
+  assert.equal(seen.password, 'test-only')
+  const homework = [...h.tasks.values()].filter(task => task.source === 'spoc')
+  assert.equal(homework.length, 1)
+  assert.equal(homework[0].title, '数学 作业：第三章习题')
+  assert.equal(homework[0].taskType, 'homework')
+  assert.equal(h.states.buaa.spocError, '')
+  assert.equal(h.states.buaa.spocTermCode, '2026-2027-1')
+  assert.equal(JSON.stringify(h.states).includes('test-only'), false)
+})
+
+test('a failed SPOC fetch only warns and never rolls back the JW import', async () => {
+  const h = harness()
+  const spoc = {
+    fetchAssignments: async () => {
+      throw Object.assign(new Error('SPOC 接口不可用'), { code: 'network' })
+    },
+  }
+  const result = await h.sync(spoc)
+
+  assert.equal(result.entries.created, 3)
+  assert.equal(result.spoc.failed, 'SPOC 接口不可用')
+  assert.equal(result.spoc.code, 'network')
+  assert.equal(h.states.buaa.spocError, 'SPOC 接口不可用')
+  assert.equal(h.entries.size, 3)
+})
+
+test('manual sync establishes the iclass session and a failure only warns', async () => {
+  const h = harness()
+  let seen
+  const signin = {
+    acquireSession: async credentials => {
+      seen = credentials
+      return { userId: 'user-1', sessionId: 'session-1' }
+    },
+  }
+  const result = await h.sync(undefined, signin)
+
+  assert.deepEqual(result.signin, { ready: true })
+  assert.equal(result.entries.total, 3)
+  assert.equal(seen.username, '23370001')
+  assert.equal(seen.password, 'test-only')
+  assert.equal(h.states.buaa.signinError, '')
+  assert.equal(JSON.stringify(h.states).includes('test-only'), false)
+  assert.equal(JSON.stringify(h.states).includes('session-1'), false)
+
+  const failed = harness()
+  const warned = await failed.sync(undefined, {
+    acquireSession: async () => {
+      throw Object.assign(new Error('iclass 接口不可用'), { code: 'network' })
+    },
+  })
+  assert.equal(warned.entries.created, 3)
+  assert.equal(warned.signin.failed, 'iclass 接口不可用')
+  assert.equal(warned.signin.code, 'network')
+  assert.equal(failed.states.buaa.signinError, 'iclass 接口不可用')
+})
+
+test('manual sync respects a SPOC opt-out made while its feed is loading', async () => {
+  for (const fail of [false, true]) {
+    const h = harness()
+    const result = await h.sync({
+      fetchAssignments: async () => {
+        h.states.buaa.spocEnabled = false
+        if (fail) throw new Error('late SPOC error')
+        return spocFeed([assignment()])
+      },
+    })
+    assert.deepEqual(result.spoc, { skipped: 'disabled' })
+    assert.equal([...h.tasks.values()].some(task => task.source === 'spoc'), false)
+    assert.equal(h.states.buaa.spocError, undefined)
+    assert.equal(result.entries.total, 3)
+  }
+})
+
+test('disposing the host cancels deferred JW sync and cannot recreate memory sessions', async t => {
+  const { apply } = await import('../index.js')
+  const signin = await import('../host/signin.js')
+  const spoc = await import('../host/spoc.js')
+  const h = harness()
+  h.states.buaa.spocEnabled = false
+  let command, release, enteredResolve
+  const entered = new Promise(resolve => { enteredResolve = resolve })
+  const effects = []
+  const ctx = {
+    scheduleCore: h.service,
+    scheduleCommands: {
+      register: spec => { command = spec.commands[0]; return () => {} },
+      registerGuide: () => () => {},
+    },
+    timer: { interval: () => () => {} },
+    get: () => null,
+    logger: { info() {}, warn() {} },
+    effect: fn => effects.push(fn()),
+  }
+  const original = globalThis.fetch
+  t.after(() => { globalThis.fetch = original; signin.clearSession(); spoc.clearSession() })
+  globalThis.fetch = async (url, options = {}) => {
+    const target = String(url)
+    if (target.includes('/getMyScheduleDetail.do')) {
+      if (options.method === 'POST') {
+        enteredResolve()
+        return new Promise(resolve => { release = resolve })
+      }
+      return new Response(null, { status: 302, headers: { Location: 'https://synthetic-sso.invalid/login' } })
+    }
+    if (target === 'https://synthetic-sso.invalid/login') return options.method === 'POST'
+      ? new Response('', { headers: { 'Set-Cookie': 'CASTGC=SYNTHETIC_ONLY' } })
+      : new Response('<input name="execution" value="test">')
+    throw new Error('No request may start after disposal')
+  }
+  await apply(ctx)
+  const pending = command.run({ password: 'test-only' })
+  const rejected = assert.rejects(pending, { code: 'cancelled' })
+  await entered
+  await assert.rejects(command.run({ password: 'test-only' }), { code: 'busy' })
+  for (const dispose of effects.reverse()) dispose?.()
+  release(new Response(JSON.stringify({ code: '0', ...payload() })))
+  await rejected
+  assert.equal(signin.hasSession(), false)
+  assert.equal(spoc.hasSession(), false)
+  assert.equal(h.calls.length, 0)
+})
+
+test('manual sync preserves homework when SPOC returns a different semester', async () => {
+  const h = harness()
+  h.tasks.set('history', { id: 'history', title: '数学 作业：旧作业', source: 'spoc', due: '2026-10-01T15:59:00.000Z' })
+  const result = await h.sync({ fetchAssignments: async () => spocFeed([], { termCode: '2027-2028-1' }) })
+  assert.equal(result.spoc.code, 'term_mismatch')
+  assert.equal(h.tasks.has('history'), true)
+  assert.equal(result.entries.total, 3)
+})
+
+test('SPOC opt-out skips the extra application entirely', async () => {
+  const h = harness()
+  h.states.buaa.spocEnabled = false
+  let called = false
+  const result = await h.sync({
+    fetchAssignments: async () => { called = true; return spocFeed([]) },
+  })
+  assert.equal(called, false)
+  assert.equal(result.spoc, undefined)
+  assert.equal(result.entries.total, 3)
 })

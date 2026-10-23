@@ -11,6 +11,7 @@
 | 需求 | 用什么 | 为什么 |
 |---|---|---|
 | 防抖搜索、节流刷新、界面倒计时、"5 分钟后重试一次" | `ctx.timer` | 进程内、随插件卸载自动清理 |
+| 页面存活期间刷新 SPOC 作业截止时间 | `ctx.timer` + 北航来源插件的内存会话 | 每 30 分钟一次；关闭开关、无会话或无学期起点时直接跳过，不接触密码 |
 | 跑几十秒的活儿：抓取远端数据、批量导出、OCR | `ctx.jobs` | 有 id、有状态、有输出环、可取消、能让 UI 流式看 |
 | 页面内提醒（任务/条目） | 核心 `host/reminders.js` 派生 + `client.notify.js` 30s 轮询 + Web Notification | 页面打开时每 30s 检查，Web Notification/页面内 toast 呈现 |
 | 让 Agent 按周期主动干活（如二游周检） | 平台「自动化任务」能力 | 绑定 Session、消耗 Agent 轮次 |
@@ -47,6 +48,24 @@ export function apply(ctx) {
 > `ctx.timer` 而不在 `export const inject` 里列 `'timer'`，激活时会报
 > `cannot get property "timer" without inject`（本仓库 gacha 插件曾踩过）。
 > 客户端 bundle 的 `dsh.client.inject` 同理要列 `timer`。
+
+**北航 SPOC 作业轮询**（`dsh-schedule-buaa/index.js`）：`inject` 已含 `'timer'`，
+每 30 分钟调用一次 `runSpocPoll()`：
+
+```js
+ctx.effect(() => ctx.timer.interval(() => {
+  void runSpocPoll({ service, spoc })
+}, 30 * 60_000), 'buaa-schedule: SPOC poll')
+```
+
+它只在「开关未关闭 + 内存里已有会话 + 已配置学期起点」时发请求；没有密码，也没有
+`ctx.jobs`。会话过期时 `spoc.js` 清掉内存会话并记录 `spocError`，轮询自然停止，
+设置卡提示用户再手动同步一次。这样既满足作业截止时间会变的需求，又不把密码或
+token 写进磁盘。
+
+iclass 远程签到的 `userId`/`sessionId` 也只在手动同步时建立，存 `host/signin.js` 的进程内存，
+不做周期轮询。用户点击条目上的「远程签到」时才读当天 iclass 课表并提交；宿主重启后同样
+需要再手动同步一次。
 
 ---
 
@@ -108,9 +127,10 @@ interface JobOutcome {
 - 本地实现的默认限制：`maxConcurrentJobsPerOwner` 10（按精确 owner 计 `running` + `stopping`，无主作业共用一个桶）、`retainBytes` 256 KiB、`settledRetainBytes` 16 KiB、`pumpPollMs` 150。
 - 浏览器侧有一个现成的作业列表面板（`@deepseek-ai/dsh-client-ui-jobs`）；`ctx.jobController` 提供 `@Remote({ mode: 'stream' }) list/follow` 与 `@Remote('kill') kill`。**不要**自己再写一套轮询。
 
-本项目**不使用 jobs**：教务同步是"一次登录 + 两个整学期请求"，秒级完成，同步跑在 CLI 命令里
-（`schedule buaa sync` 的 `timeoutMs` 180 s）比给用户维护一个作业列表更合适。需要多步进度时再考虑
-`ctx.jobs`（它不跨重启，长期任务仍应落存储 domain；需要 Agent 定时干活时用平台「自动化任务」能力）。
+本项目**不使用 jobs**：教务同步是"一次登录 + 两个整学期请求 + SPOC 作业分页"，秒级完成，同步跑在 CLI 命令里
+（`schedule buaa sync` 的 `timeoutMs` 180 s）比给用户维护一个作业列表更合适；SPOC 的 30 分钟增量刷新
+用 `ctx.timer` 即可，不需要可观察作业。需要多步进度时再考虑 `ctx.jobs`（它不跨重启，
+长期任务仍应落存储 domain；需要 Agent 定时干活时用平台「自动化任务」能力）。
 
 ---
 

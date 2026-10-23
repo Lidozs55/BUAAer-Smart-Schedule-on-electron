@@ -1,7 +1,7 @@
 # 11 · 来源适配器契约（新增学校/导入格式）
 
 > 一句话：**核心 `@lidozs55/dsh-schedule` 拥有日程真相，来源插件只拥有"怎么把外部数据变成核心写调用"。**
-> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（课程/考试条目与考试任务）与二游前瞻
+> 本仓库有两个实现：北航教务 `@buaaer/dsh-schedule-buaa`（课程/考试条目、考试与作业任务、远程签到）与二游前瞻
 > `@lidozs55/dsh-schedule-gacha`（条目，见 `12-gacha-preview.md`）；前者适合当模板。
 
 ---
@@ -76,7 +76,15 @@
 北航适配器：
 
 ```js
-sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供显示
+sourceState.buaa = {
+  buaaId: '25371416',
+  termCode: '2026-2027-1',
+  spocEnabled: true,                 // SPOC 作业同步开关
+  spocTermCode: '2026-20271',        // SPOC 最近一次返回的学期码（与教务分隔符不同）
+  spocLastSyncAt: '2026-10-22T02:00:00.000Z',
+  spocError: '',                     // 最近一次 SPOC 失败原因；成功后清空
+  signinError: '',                   // 最近一次 iclass 会话建立失败原因；成功后清空
+}
 ```
 
 规则：
@@ -84,9 +92,18 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - source id 必须匹配 `^[a-z][a-z0-9_-]*$`。任务的 `source` 标记使用同一文法（不再限定固定枚举），
   新的来源插件可以用自己的 id 标记它创建的任务，例如 `createTask({ ..., source: 'jwxt' })`。
 - 不要往 `sourceState` 放日程业务数据；任务/条目一律走核心服务。
-- 不要放密码。SSO 密码只作当次 CLI/设置调用入参。
-- **不要缓存会话**：一学期只导一次的来源，用密码换一次登录就够了；进程内 jar 缓存、cookie
-  落盘、会话 jar 都会让"下次还能免密"变成需要维护的状态。北航适配器因此没有会话缓存。
+- 不要放密码、token、cookie 或任何可直接复用的凭据。
+- **默认不缓存会话**：一学期只导一次的来源，用密码换一次登录就够了，跨调用/跨重启的
+  jar 缓存会把"下次还能免密"变成需要维护的长期状态。
+- 例外只允许**进程内存会话**：来源确实需要周期刷新（如北航 SPOC 作业截止时间）或跨调用交互
+  （如 iclass 远程签到），可以把 token + jar 或 userId/sessionId 放在来源自己的模块变量里，
+  但必须满足：不写 `sourceState`、不落盘、不写日志、没有密码也能自动过期、宿主重启后失效并
+  提示用户再手动同步一次。北航的 `host/spoc.js` 与 `host/signin.js` 即此模式；30 分钟轮询
+  只读 SPOC 内存会话，签到按钮只读 iclass 内存会话，都不会重新索要密码。
+- 修改学号或卸载来源插件会清除两种会话；关闭 SPOC 只清除 SPOC 会话。登录与请求绑定账号和
+  会话代次，已取消的请求不能恢复旧会话，迟到的失败也不能清除新会话。手动同步与后台轮询不重叠。
+- 上游错误原文可能包含认证 URL 或 token，只能用于宿主内的错误分类；持久化诊断、日志与回执
+  必须使用固定的安全提示，不回传上游原文。
 
 ---
 
@@ -128,10 +145,11 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
    直接抛 `cannot get property "timer" without inject`（见 `05-time-and-background.md`）。
 
 3. **写入**：解析外部数据 → 调用 `replaceSourceEntries(source, inputs)`（完整来源条目快照），或普通条目 CRUD / `createTask`。为每条来源条目生成稳定 `sourceKey`，不要复制冲突检测或存储实现。
-4. **状态**：学号、学期码等放 `sourceState.<source>`；密码/一次性 token/会话 jar 不入库。
+4. **状态**：学号、学期码、开关与上次同步结果放 `sourceState.<source>`；密码、token、会话 jar 不入库。确需周期刷新时按 §3 的例外使用仅内存会话。
 5. **UI**：往核心的 `schedule.settings.blocks` 子槽位注册设置卡（`ctx.slots.inject('schedule.settings.blocks', …)`），
-   不要另开 `settings.section`，也不要复制日历面板。样式复用核心的 `bsch-*` 类（继承 `--dsw-*` token）。
-   学期起点这类**核心已拥有的设置不要在来源卡里重复一份**。
+   不要另开 `settings.section`，也不要复制日历面板。条目级动作（如远程签到）注册到
+   `schedule.entry.actions`，owner props 是 `{ entry }`，自己判断来源与日期。样式复用核心的
+   `bsch-*` 类（继承 `--dsw-*` token）。学期起点这类**核心已拥有的设置不要在来源卡里重复一份**。
 6. **路由**：用 `ctx.connection.fetch.register` 注册 `/api/<source>-schedule`（北航即
    `/api/buaa-schedule`），沿用 `{ ok, value } | { ok, error }` wire shape；不要占用核心路由。
 7. **提示词**：用 `systemPrompt.section` 加一小段来源说明，指向自己的 `schedule <命名空间> --help`，不覆盖核心段。
@@ -149,23 +167,37 @@ sourceState.buaa = { buaaId: '25371416', termCode: '2026-2027-1' }   // 仅供�
 - ❌ 在来源插件里重做提醒、冲突检测、撤销栈。
 - ❌ 让来源插件直接打开核心数据库、另起 CLI server 或绕过 `scheduleCommands` 暴露命令。
 - ❌ 把密码写进 `sourceState`、Config、日志或命令输入。
-- ❌ 为"一学期一次"的导入维护会话缓存、cookie jar 或后台作业队列——它们是长期状态，
-  换来的只是省一次输密码。
+- ❌ 把会话、cookie jar 或 token 写进 `sourceState`、Config、日志或任何磁盘文件；周期刷新只允许
+  §3 的内存会话，宿主重启后必须重新手动同步。
+- ❌ 为"一学期一次"的导入维护跨调用/跨重启的会话缓存——换来的只是省一次输密码。
 - ❌ 把日历用不到的字段（教师姓名、学分、课程号、教务配色）解析进存储。
 
 ---
 
 ## 7. 北航适配器作为示例
 
-- `host/state.js`：`sourceState.buaa`（学号/学期码，仅供显示）。
+- `host/state.js`：`sourceState.buaa`（学号/学期码/SPOC 开关、上次同步与错误，仅供显示）。
 - `host/jw.js`：SSO 登录 + 两个整学期端点（`getMyScheduleDetail.do?type=term`、`exams.do`）；
-  登录 jar 只在本次调用内存活，不落盘、不跨调用复用。
+  JW 自身不缓存登录 jar；SPOC 可将复用的 jar 保留在其进程内会话中，始终不落盘。`ssoLoginAt` 同时供 SPOC/iclass 换 ticket。
+- `host/spoc.js`：SPOC（智学北航）CAS token 交换、AES 查询参数、作业分页与解析；会话（token + jar）
+  只存模块内存，供 30 分钟轮询复用，宿主重启即失效。密码仍然只出现在手动同步的当次调用里。
+- `host/spoc-sync.js`：未提交作业 → 核心 `homework` 任务。身份键是归一化的「课程 + 作业名」，
+  截止时间变化只更新 `due`；已提交作业不生成待办；删除只限 `source='spoc'` 且不早于学期起点，
+  手动任务同名时只校正 `due`。只有完整、有效的分页才能对账；缺页、达到分页上限或 SPOC 当前学期
+  与所选学期不一致时保留已有待办并报告警告。两端学期码比较时忽略连字符。SPOC 失败不回滚教务导入。
+- `host/signin.js`：iclass 远程签到。手动同步时复用 JW jar 解析 `loginName`，必要时用同一次
+  密码向 CAS 再取一次 iclass ticket，换取 `userId`/`sessionId`；会话只存模块内存。签到按钮
+  触发时只读当天 iclass 课表，按归一化课程名与北京时间起止匹配排课行，已签到直接返回成功。
+  非当天条目、非 `source='buaa'` 或非 `teaching:` 来源键一律拒绝，客户端不能传任意课程 id。
+  时间戳与签到请求沿用 UBAA 的校方 HTTP `:8081` 接口，会话不落盘不等于传输加密；当前未实现 WebVPN。
 - `host/parse.js`：整学期课表按学期起点与教务实际周次生成带日期的普通课程条目；`exams.do` 生成考试条目与考试任务草稿。周次从 `cellDetail` 的周次行取（一个格可能有多组），退化为 `weeksAndTeachers`；单双周展开后只生成实际日期，不外推空周。教学安排使用 `category: 'course'`，考试使用 `exam`，均为 `lock: true`；地点统一为 `location`。教师姓名/学分/课程号/教务配色等日历不消费字段就地丢弃。
 - 类别升级独立标记 `categoryModelVersion: 1`：只把旧 BUAA `sourceKey` 以 `teaching:` 开头、类别为 `study` 的教学条目迁为 `course`，手建学习不变；若目标类别已删则归 `other`，不复活预设。
-- `host/sync.js`：一次登录 → `replaceSourceEntries('buaa', [...teachingEntries, ...examEntries])` 完整来源快照 + 考试任务对账；重复导入用稳定键保留条目 ID，缺席条目从本来源移除。学期码由 `termStart` 推导（见下），`-3` 为暑期学期。考试任务仍独立保留，身份键是**名称 + 考试日期**，同名期中/期末不能合并。任务删除范围限于本源且日期不早于学期起点；用户手建的同名考试任务只校正 `due`，标题/优先级/备注归用户。
+- `host/sync.js`：一次登录 → `replaceSourceEntries('buaa', [...teachingEntries, ...examEntries])` 完整来源快照 + 考试任务对账；随后用同一登录读取 SPOC 作业并对账为 `homework` 任务。重复导入用稳定键保留条目 ID，缺席条目从本来源移除。学期码由 `termStart` 推导（见下），`-3` 为暑期学期。考试任务身份键是**名称 + 考试日期**，同名期中/期末不能合并。任务删除范围限于本源且日期不早于学期起点；用户手建的同名考试任务只校正 `due`，标题/优先级/备注归用户。SPOC 或 iclass 会话失败只写入 `spocError`/`signinError` 并出现在回执里，不影响课表/考试。
 - `host/commands.js`：`schedule buaa sync` 与导入 guide（Agent 调）。
-- `host/api.js`：`/api/buaa-schedule`（设置卡调；只写学号，学期起点归核心设置页）。
-- `client.settings.js`：一张设置卡（学号、密码、导入），注册进核心的 `schedule.settings.blocks`。
+- `host/api.js`：`/api/buaa-schedule`（设置卡与签到按钮调；写学号与 SPOC 开关，`signin` 按已存条目 id 在宿主侧匹配，学期起点归核心设置页）。
+- `client.api.js`：设置卡与签到按钮共用的 `/api/buaa-schedule` 客户端与错误解码，避免两个 UI chunk 互相依赖。
+- `client.settings.js`：一张设置卡（学号、密码、SPOC 开关与状态、iclass 会话状态、导入），注册进核心的 `schedule.settings.blocks`。
+- `client.signin.js`：向核心 `schedule.entry.actions` 注册「远程签到」动作；只在当天 `source='buaa'` 且来源键为 `teaching:` 的条目上渲染。
 
 **学期码推导**（`host/time.js` `termCodeFor(termStart)`，按学期起点所在月份）：
 

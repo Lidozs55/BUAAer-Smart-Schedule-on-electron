@@ -176,6 +176,25 @@ test('locked entries remain deletable and delete undo preserves location and loc
   assert.equal(deleted[1], 'recreated')
 })
 
+test('entry editor forwards source actions with the opened entry as owner props', async () => {
+  const client = await clientHarness()
+  const { EventEditor } = client.module('editors')
+  const calls = []
+  const initial = entry('action')
+  const props = {
+    t: key => key, initial, api: {}, onClose() {}, onSaved() {},
+    renderSlot: (key, owner) => { calls.push({ key, owner }); return { type: 'span', props: {}, children: ['action'] } },
+  }
+  const tree = client.render(EventEditor, props)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0].key, 'schedule.entry.actions')
+  assert.equal(calls[0].owner.entry, initial)
+  assert.ok(find(tree, node => node.type === 'span' && node.children.includes('action')))
+
+  const createProps = { ...props, initial: null, renderSlot: () => { throw new Error('create must not render source actions') } }
+  client.render(EventEditor, createProps)
+})
+
 test('batch creation exposes shared location and lock controls', async () => {
   const client = await clientHarness()
   const { BatchEditor } = client.module('editors')

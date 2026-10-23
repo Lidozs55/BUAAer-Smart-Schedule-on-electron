@@ -7,6 +7,7 @@
 import { randomUUID } from 'node:crypto'
 import { cloneCategories, ISO_DATETIME_RE, PRIORITIES, REMIND_LEAD_MAX_MINUTES, SOURCE_ID_RE, TASK_TYPES, validateCategories } from './model.js'
 import { findConflicts } from './conflicts.js'
+import { createDropbox } from './dropbox.js'
 import { anchorToday, addDays, dateKey, termWeek, today, zonedIso } from './semester.js'
 
 const nowIso = () => new Date().toISOString()
@@ -68,6 +69,12 @@ export function createScheduleService(ctx, domain) {
   const tasks = domain.table('tasks')
   let revision = 0
   const listeners = new Set()
+
+  // Ephemeral UI transport (see host/dropbox.js): not domain data, no
+  // revision/subscriber semantics. The bridge stages/confirms; the schedule
+  // client takes confirmed rows and opens a session. Kept as a sub-object so
+  // `scheduleCore`'s domain surface stays entries/tasks/meta only.
+  const dropbox = createDropbox({ now: nowIso })
 
   const changed = tables => {
     revision += 1
@@ -146,6 +153,12 @@ export function createScheduleService(ctx, domain) {
   }
 
   const service = {
+    /**
+     * Ephemeral host inbox for pet drops (§4d). Deliberately a sub-object,
+     * not domain methods: no storage, no revision, no events.
+     */
+    dropbox,
+
     // -- entries ------------------------------------------------------------
     listEntries(from, to) {
       // Half-open window [from, to); both bounds optional.

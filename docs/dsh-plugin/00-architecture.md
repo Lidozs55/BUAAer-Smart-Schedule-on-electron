@@ -19,7 +19,8 @@
   row id `gacha-schedule`，见 `12`）——读取 gacha-calendar 服务的格式化结果，定时为六款游戏
   对账前瞻直播条目；版本更新只保留在来源卡。
 - **桌宠桥** `dsh-plugin/dsh-schedule-bridge/`（`@lidozs55/dsh-schedule-bridge`，host-only，
-  见 `09`）——只依赖核心的提醒派生集与任务完成写面（气泡上的「已完成」）。
+  见 `09`）——只依赖核心的提醒派生集、任务完成写面（气泡上的「已完成」）与拖放待确认暂存队列
+  （文本/图片拖给桌宠，确认后直接新建会话；不解析、不 OCR、不调 LLM）。
 
 ```
 dsh-plugin/dsh-schedule/
@@ -34,6 +35,7 @@ dsh-plugin/dsh-schedule/
 │   ├── model.js          # 类别/类型/来源 ID 与时间格式常量
 │   ├── conflicts.js      # 写入路径的重叠检测
 │   ├── service.js        # 领域服务 scheduleCore（唯一业务实现 + sourceState）
+│   ├── dropbox.js        # 桌宠拖放待确认暂存信箱（ephemeral，无存储/revision/事件；09 §2.3）
 │   ├── command-registry.js  # 命令树/选项校验/catalog/guide，子插件命名空间扩展点
 │   ├── commands.js       # 核心 entry/task 命令与 guide 正文
 │   ├── cli-server.js     # 认证 loopback HTTP + discovery 文件 + CLI 安装
@@ -49,12 +51,14 @@ dsh-plugin/dsh-schedule/
 dsh-plugin/dsh-schedule-buaa/
 ├── package.json          # exports: "." / "./client"；dsh.bundle.patch + dsh.client
 ├── cordis.patch.yml      # 插入 row buaa-schedule
-├── index.js              # inject: ['scheduleCore', 'connection', 'scheduleCommands']
+├── index.js              # inject: [... 'timer']；手动同步 + 30 分钟 SPOC 轮询
 ├── host/
-│   ├── state.js          # sourceState.buaa（学号/学期码，仅供显示）
-│   ├── jw.js             # 北航 SSO + 两个整学期端点（课表 / 考试），无会话缓存
+│   ├── state.js          # sourceState.buaa（学号/学期码/SPOC 开关与上次结果，仅供显示）
+│   ├── jw.js             # 北航 SSO + 两个整学期端点（课表 / 考试），登录 jar 仅当次
+│   ├── spoc.js           # SPOC（智学北航）CAS 换 token、作业分页；会话仅存进程内存
+│   ├── spoc-sync.js      # SPOC 未提交作业 → homework 任务对账
 │   ├── parse.js          # 整学期课表 → 按实际周次生成带日期的课程条目
-│   ├── sync.js           # 一次同步：登录 → 拉取 → replaceSourceEntries + 考试任务对账
+│   ├── sync.js           # 一次同步：登录 → 拉取 → replaceSourceEntries + 考试/SPOC 任务对账
 │   ├── commands.js       # schedule buaa sync + 导入 guide
 │   ├── api.js            # /api/buaa-schedule（设置页通道）
 │   └── time.js           # 来源侧学期码/教学周换算（不 import 核心内部模块）
@@ -96,17 +100,17 @@ dsh-plugin/dsh-schedule-gacha/
 | # | 决策 |
 |---|---|
 | R1 | UI 全面贴近 DSH：shell 样式只用 `--dsw-*` token；类别块允许使用用户配置的鲜明 `#RRGGBB` accent，其余颜色仍走 token（§3.3） |
-| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js` 派生 + `client.notify.js` 轮询通知），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地设计 v2，见 `09`）：策略/真相在核心，投递表面（页面通知/Web Notification + 桌宠气泡）可多个，均不经过 Agent 会话 |
+| R2 | 提醒逻辑是核心插件内的**子系统**（`host/reminders.js` 派生 + `client.notify.js` 轮询通知），不是独立插件；桌宠联动经**桥插件** `@lidozs55/dsh-schedule-bridge`（已落地设计 v2，见 `09`）：策略/真相在核心，投递表面（页面通知/Web Notification + 桌宠气泡）可多个，均不经过 Agent 会话；文本/图片拖入走基座 §4d → 核心确认暂存 → 点「确认」直接新建会话交给 Agent（不再经剪贴板页） |
 | R3 | 主面板 = 同一面板内 `日程 \| 任务 \| 剪贴板` 三 tab（窄幅侧栏设计），不搞左右分栏 |
 | R4 | 插件内零 LLM：智能解析/修改 = 用户在 session 内让 Agent 调用 `schedule` CLI |
 | R5 | 自动排期、休息条目、由任务生成条目：**不做**（原实现本就是坏的/恒空的） |
-| R6/R7 | 确定性离线解析（ctx.llm seam）、语音、图片 OCR：**不做** |
-| R8 | 剪贴板队列保留在主面板第三个 tab；导入 = 队列文本发送到新会话，Agent 用 CLI 批量创建落库 |
+| R6/R7 | 确定性离线解析（ctx.llm seam）、语音、图片 OCR：**不做**（图片由 Agent 多模态输入读取，插件只转发附件） |
+| R8 | 剪贴板队列保留在主面板第三个 tab；导入 = 队列文本与图片附件发送到新会话，Agent 用 CLI 批量创建落库。桌宠拖放不进入该队列：确认后直接新建会话 |
 | R9 | 精力周期整个概念（数据/设置/逻辑）：**删除** |
 | R10 | 大组件按职能拆分重写（单组件 ≤300 行），不整体搬运 Vue 代码 |
 | R11 | 模型选择/key/限流均不进插件 |
 
-**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目逐条任意 hex 颜色（类别配色不在此限制内）、`Task.urgency`、只物化未来 7 天的截断导入。旧 README 声称的四象限视图、SPOC 同步、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴。
+**有意不迁移/已删除**（未来不要"顺手恢复"）：Electron 托盘/悬浮窗/窗口控制、cpolar 与手机端 SPA、Flask/JWT/静态托管、自有 LLM key 管理、`--primary-color` 主题体系、条目逐条任意 hex 颜色（类别配色不在此限制内）、`Task.urgency`、只物化未来 7 天的截断导入。旧 README 声称的四象限视图、专注模式、头像上传、Chart.js **代码里从未存在**，属新功能立项范畴；SPOC 同步已于 2026-10-22 落地（见 §5 北航来源插件），不属于旧实现遗留。
 
 ---
 
@@ -167,7 +171,7 @@ global: { termStart: '' /*第一周周一 YYYY-MM-DD；空串表示未设*/,
 | 问题 | 结论 |
 |---|---|
 | root-scope 页面的写路径 | `ctx.connection.fetch.register()` 在共享 `/api` 前缀上挂精确路由 `/api/schedule-core`（GET snapshot + POST op）。浏览器信任围栏 + cookie 鉴权先于插件 handler，与 Remote RPC 同级可信。裸 `ctx.webServer` 路由**无鉴权**，不承载业务写 |
-| 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息 |
+| 剪贴板"发送到新会话" | 0.2.x 无 composer 预填面。用 `ctx.remote.session.create({})` → `ctx.remote.session.prompt({mode:'queue', content:[text, ...image]})` → `ctxWorkspace.openSession(id)`——队列文本直接成为新会话首条消息，图片以 `{type:'image', mediaType, data, name?}` 附件块随行（Host 侧再转持久附件） |
 | 服务暴露形态 | `export function apply` + `ctx.effect(() => ctx.provide('scheduleCore', service))`；命令扩展点用同一个 `ctx.provide('scheduleCommands', registry)`；桥走 `inject: ['scheduleCore']` |
 | Agent 传输 | 认证 loopback HTTP（随机端口 + bearer token + Host 校验），CLI 只转发注册命令树；不开放任意 service/route，也不让 CLI 直接打开数据库 |
 | 提醒投递 | 提醒是**纯派生**：`host/reminders.js` 按 Config 提前量现算 `service.upcomingReminders()`（条目/任务的非空 `remindLead` 优先），条目带 `kind: 'task'|'entry'` 与确定性 `key`。页面打开时 `client.notify.js` 每 30s 轮询 `/api/schedule-core?view=reminders`，在 `at−60s` 窗口内弹 Web Notification（未授权时页面内 toast）；桌宠桥读同一派生集做气泡。派生结果按 `key@at` 去重 |
@@ -245,13 +249,23 @@ CLI server 只做参数校验与分发，不提供任意 service/route 透传；
 **核心客户端通道**：`GET /api/schedule-core?weekStart=YYYY-MM-DD`（snapshot：revision/global/weekStart/termWeek/today/entries/tasks）+ `POST`（op 分发，同服务方法；含 `op=setCategories`（参数 `categories`，返回更新后的 getMeta）及本格式 export/import）。插件数据无推送通道，客户端靠 20 s revision 轮询；面板外的批量写入面（设置卡导入、来源适配器）在完成后派发同窗 `schedule:data-changed` window 事件（契约归 `client.core.js`），挂载中的日程视图立即重拉，未挂载的靠挂载时取数。
 
 **北航来源插件**：CLI 命名空间 `schedule buaa sync`；客户端通道 `GET/POST /api/buaa-schedule`
-（学号、同步）。教务的 `getMyScheduleDetail.do` 一次返回整学期课表且每个格自带星期/时间/周次，
-所以同步没有窗口、没有分页、没有会话缓存：一次登录 + 两个请求（课表、考试），课表按
+（学号、SPOC 开关、同步）。教务的 `getMyScheduleDetail.do` 一次返回整学期课表且每个格自带星期/时间/周次，
+所以课表同步没有窗口、没有分页：一次登录 + 两个请求（课表、考试），课表按
 `replaceSourceEntries` 对账锁定的课程与考试条目，周次直接取教务给的值并转换为日期，不外推；考试任务同时保留。学期码由用户填的学期起始日期
 （第一周周一，归核心设置页所有）推导，`termCode={Y-1}-{Y}-3` 为 7–8 月的暑期学期。
-设置卡只填学号与密码，不重复学期起点输入。
-`sourceState.buaa = { buaaId, termCode }` 仅供显示。密码只经 `--password-stdin` 或
-`--password-env` 进入当次调用，不作为普通命令行参数。
+同一登录接着读取 SPOC（智学北航）当前学期作业：分页取回后，未提交作业按「课程 + 作业名」对账为
+`homework` 任务并更新 `due`，已提交作业不生成待办；删除只限 `source='spoc'` 且不早于学期起点。
+SPOC 失败只写入 `sourceState.buaa.spocError` 并作为警告返回，不影响课表/考试。SPOC 会话（token + jar）
+仅存 `host/spoc.js` 的进程内存，供 30 分钟 `ctx.timer.interval` 轮询；宿主重启后需再手动同步一次，
+关闭设置卡开关会清空会话。设置卡只填学号、密码与 SPOC 开关，不重复学期起点输入。
+
+同一手动同步还会建立 iclass 远程签到会话（userId + sessionId，仅存 `host/signin.js` 的进程内存）。
+当天北航教学条目的编辑器渲染核心 `schedule.entry.actions` 子槽位，由 `client.signin.js` 提供
+「远程签到」按钮。宿主只接受已存条目：校验当天、`source='buaa'` 与 `teaching:` 来源键后，读取
+当天 iclass 课表，按归一化课程名与北京时间起止匹配排课行；已签到直接返回，客户端不能指定任意课程 id。
+签到失败只写入 `sourceState.buaa.signinError`，不影响导入。宿主重启或 iclass 会话失效后需再手动同步一次。
+`sourceState.buaa = { buaaId, termCode, spocEnabled, spocTermCode, spocLastSyncAt, spocError, signinError }` 仅供显示。
+密码只经 `--password-stdin` 或 `--password-env` 进入当次调用，不作为普通命令行参数。
 
 **二游前瞻来源插件**：CLI 命名空间 `schedule gacha list|refresh|posts|apply-official|watch`；
 客户端通道 `GET/POST /api/gacha-schedule`（设置卡状态、六款游戏开关、立即刷新）。读取
@@ -318,7 +332,9 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
 （已知缺陷，不修）、独立导入条目编辑路径（统一到普通条目 CRUD）、
 同步成功后自动刷新课表的颜色联动（完成态只改渲染不改数据）。
 
-**延后项**（有真实价值，按需立项）：桥侧拖拽收纳/常驻徽标见 `09` §4。
+**延后项**（有真实价值，按需立项）：常驻徽标见 `09` §4。桥侧拖拽收纳已落地（`09` §2.3，
+2026-10-22；图片与确认即会话 2026-10-23）：文本/图片拖到桌宠 → 核心内存暂存 → 点「确认」
+直接新建 Agent 会话，Agent 在写入前再列出拟变更条目等用户确认。
 页面提醒已落地（`client.notify.js`，2026-10-21）：30s 轮询 + Web Notification，未授权时页面内 toast；
 条目与任务共用同一派生集。页面关闭后的系统级通知仍取决于桌宠桥或浏览器能力。
 
@@ -347,7 +363,8 @@ SmartInput 前端 LLM 解析（Agent 会话 + 剪贴板队列替代）、读接�
   命令、`checkSession`/`clearSyncSession` 与 30 分钟 SSO 会话缓存、`ctx.jobs` 后台作业以及
   新旧两种解析格式并存——一并删除，不做兼容。教师姓名、学分、课程号等日历不消费的字段在解析时
   直接丢弃。教学安排按实际周次生成带日期的普通条目，写入走 `replaceSourceEntries`（完整来源快照），学期码由学期起点推导
-  并支持暑期学期 `-3`。学期起点输入只在核心设置页保留一处。
+  并支持暑期学期 `-3`。学期起点输入只在核心设置页保留一处。2026-10-22 新增的 SPOC 会话只存进程内存
+  （不跨调用/重启复用密码，也不落盘），与当年取消的跨调用 SSO 缓存不是同一机制。
 
 ---
 

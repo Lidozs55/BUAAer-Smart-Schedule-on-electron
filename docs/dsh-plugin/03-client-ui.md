@@ -121,6 +121,7 @@ ctx.slots.inject(ownerKey, () => ctx.slots.register(options, Component))
 | **`sidebar.panellist`** | list / **root** | 全局面板图标。**每个 list id 对应同名的 main 面板**；侧栏拥有按钮并从 list 元数据解析标签 | ★★★ 导航入口：`{ id: 'schedule-calendar', label, order }` |
 | `settings.section` | list / root | 每个条目一个设置页（`id` 是 section key、`order` 位置、`label` 显示文本）。**条目可声明子槽位** | ★★★ 「日程设置」整页（核心），内部再开 `schedule.settings.blocks` |
 | `schedule.settings.blocks` | list / root | **本项目自定义**：`settings.section` 条目 `children` 声明的子槽位，核心的设置页在自己两张卡之后 `renderSlot` 它 | ★★★ 北航适配器往里塞学号/同步两张卡 |
+| `schedule.entry.actions` | list / root | **本项目自定义**：`main` 日历条目在 `children` 声明的子槽位，条目编辑器以 `{ entry }` 为 owner props `renderSlot` 它；只在编辑已有条目时渲染 | ★★ 北航来源注册「远程签到」按钮 |
 | `settings.general.item` | list / root | General 里的**单个偏好行**（不投影 label，owner 不传 props，文案与写入都由你自己负责） | ★★ 单个开关 |
 | `shell.overlay` | list / root | 全窗口浮层，在每列之上、滚动容器之外；**层本身点击穿透**，条目需自己 opt-in 指针事件 | ★★ 提醒 toast |
 | `conversation.composer.dock` | list / session | 输入框卡片下方的环境条目（无 owner props） | ★ 会话内小挂件 |

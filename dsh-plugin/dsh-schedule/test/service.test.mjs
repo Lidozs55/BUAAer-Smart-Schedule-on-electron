@@ -19,6 +19,13 @@ function memoryDomain(initial = {}) {
 const makeService = () => createScheduleService({ logger: { warn() {} } }, memoryDomain())
 const input = (extra = {}) => ({ title: '学习', start: '2026-10-21T08:00:00+08:00', end: '2026-10-21T09:00:00+08:00', ...extra })
 
+test('drop staging is an isolated sub-service, not a domain method', () => {
+  const service = makeService()
+  assert.equal(typeof service.dropbox.stage, 'function')
+  assert.equal('stageDrop' in service, false)
+  assert.equal('takeDrops' in service, false)
+})
+
 test('entry defaults, location and strict boolean lock survive update and import', async () => {
   const service = makeService()
   const row = await service.createEntry(input())

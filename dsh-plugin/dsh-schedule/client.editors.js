@@ -25,11 +25,13 @@ window.__ModuleLoader__.load({
 
     /**
      * @param {object} props - `{ t, initial, api, undoApi?, refresh?, draft,
-     *   onClose, onSaved }`; `initial` null means create (with `draft`
-     * start/end), else edit. `undoApi`/`refresh` arm the undo stack.
+     *   renderSlot?, onClose, onSaved }`; `initial` null means create (with
+     *   `draft` start/end), else edit. `undoApi`/`refresh` arm the undo stack.
+     *   `renderSlot` is the core's auto-injected child-slot outlet; source
+     *   adapters use it for entry actions (e.g. remote check-in).
      */
     function EventEditor(props) {
-      const { t, initial, api, undoApi, refresh, onClose, onSaved } = props
+      const { t, initial, api, undoApi, refresh, onClose, onSaved, renderSlot } = props
       const draft = props.draft ?? {}
       const categories = categoriesOrDefault(props.categories)
       const [title, setTitle] = useState(initial?.title ?? '')
@@ -151,6 +153,13 @@ window.__ModuleLoader__.load({
         })
       }
 
+      // Source-provided entry actions (BUAA's remote check-in, …). The slot is
+      // owner-typed to the opened entry, so an action can never reach another
+      // row by rewriting ids on the client.
+      const entryActions = initial !== null && typeof renderSlot === 'function'
+        ? renderSlot('schedule.entry.actions', { entry: initial })
+        : null
+
       return h(Modal, { title: t(initial === null ? 'entry.create' : 'entry.edit'), onClose },
         conflicts !== null
           ? h('div', { className: 'bsch-error' },
@@ -177,7 +186,8 @@ window.__ModuleLoader__.load({
                 onChange: e => setEnd(e.target.value),
               })),
               h(CategoryPreview, { category: categoryId(category, categories), categories, title }),
-               entryDetails({ t, location, setLocation, lock, setLock }),
+              entryActions,
+              entryDetails({ t, location, setLocation, lock, setLock }),
               h(RemindLeadField, { t, lead, setLead }),
               field(t('entry.description'), h('textarea', {
                 className: 'bsch-textarea', value: description, rows: 2,

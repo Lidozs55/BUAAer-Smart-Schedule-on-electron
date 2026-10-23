@@ -2,10 +2,10 @@
  * BUAA SSO login and JW API access over the host's fetch.
  *
  * Credentials are call-scoped: the password is used for this login only and
- * is never stored. There is deliberately no session cache and no cookie jar
- * persistence — a timetable is a once-per-term fact, so asking for the
- * password again next term is cheaper (and safer) than keeping a login
- * alive that nothing else needs.
+ * is never stored. This module keeps no session and no cookie jar of its own —
+ * the jar it returns belongs to the caller for that call. The one deliberate
+ * exception is SPOC's in-memory session in `spoc.js`, which is never written
+ * to disk and dies with the host process.
  */
 
 const API_BASE = 'https://byxt.buaa.edu.cn/jwapp/sys'
@@ -69,7 +69,7 @@ class CookieJar {
   }
 }
 
-async function request(jar, url, options = {}) {
+export async function request(jar, url, options = {}) {
   const headers = { ...schoolHeaders, ...options.headers }
   const cookie = jar.header()
   if (cookie !== '') headers.Cookie = cookie
@@ -96,21 +96,28 @@ function extractExecution(html) {
 }
 
 /**
- * Perform the full SSO dance: trigger the JW redirect, read the login page,
- * post credentials, follow the callback chain, verify the SSO TGC.
+ * Perform the full SSO dance against any protected entry point: trigger the
+ * redirect, read the login page, post credentials, follow the callback chain,
+ * and verify the SSO TGC. JW and SPOC share the same CAS, so the SPOC client
+ * reuses this rather than carrying a second copy of the login form.
+ * @param {string} probeUrl - a URL that 302s to the SSO while anonymous.
+ * @param {string} username - student id.
+ * @param {string} password - call-scoped password.
+ * @param {AbortSignal} [signal] - optional cancellation.
+ * @param {{ requireTgc?: boolean }} [options] - SPOC verifies its own token,
+ *   so it can skip the JW-specific TGC assertion.
  * @returns {CookieJar} the authenticated jar for this call only.
  */
-export async function ssoLogin(username, password, signal) {
+export async function ssoLoginAt(probeUrl, username, password, signal, options = {}) {
   const jar = new CookieJar()
 
-  const probe = await request(jar, LOGIN_PROBE_URL, { signal })
+  const probe = await request(jar, probeUrl, { signal })
   if (probe.status !== 302) {
-    throw new BuaaError('auth', `教务入口未按预期重定向（HTTP ${probe.status}）`)
+    throw new BuaaError('auth', `登录入口未按预期重定向（HTTP ${probe.status}）`)
   }
-  const ssoUrl = probe.headers.get('location')
-  if (!ssoUrl || !ssoUrl.startsWith('http')) {
-    throw new BuaaError('auth', '教务入口重定向缺少 SSO 地址')
-  }
+  const location = probe.headers.get('location')
+  if (!location) throw new BuaaError('auth', '登录入口重定向缺少 SSO 地址')
+  const ssoUrl = new URL(location, probeUrl).toString()
 
   const loginPage = await request(jar, ssoUrl, { signal })
   if (loginPage.status !== 200) {
@@ -134,18 +141,25 @@ export async function ssoLogin(username, password, signal) {
     throw new BuaaError('auth', `登录提交失败（HTTP ${login.status}，学号或密码可能错误）`)
   }
 
-  // Follow the callback chain so the JW server session cookie lands.
+  // Follow the callback chain so the service session cookie lands.
   let hop = login
-  for (let i = 0; i < 5 && hop.status === 302; i += 1) {
+  let hopUrl = ssoUrl
+  for (let i = 0; i < 8 && hop.status === 302; i += 1) {
     const next = hop.headers.get('location')
     if (!next) break
-    hop = await request(jar, new URL(next, ssoUrl).toString(), { signal })
+    hopUrl = new URL(next, hopUrl).toString()
+    hop = await request(jar, hopUrl, { signal })
   }
 
-  if (!jar.has('CASTGC') && !jar.has('_WEU')) {
+  if (options.requireTgc !== false && !jar.has('CASTGC') && !jar.has('_WEU')) {
     throw new BuaaError('auth', '登录失败：未获得核心认证 Cookie（请核对学号与密码）')
   }
   return jar
+}
+
+/** JW-specific login; the probe is the timetable endpoint itself. */
+export function ssoLogin(username, password, signal) {
+  return ssoLoginAt(LOGIN_PROBE_URL, username, password, signal)
 }
 
 /**

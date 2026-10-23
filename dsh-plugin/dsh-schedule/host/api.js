@@ -38,6 +38,10 @@ function operations(service) {
     setTaskCompleted: body => service.setTaskCompleted(body.id, body.completed),
     deleteTask: body => service.deleteTask(body.id),
     clearAllData: () => service.clearAllData(),
+    /** Confirmed pet drops awaiting a client session hand-off (vivarium §4d). */
+    listConfirmedDrops: () => service.dropbox.listConfirmed(),
+    /** Acknowledge delivered rows so the client never prompts the same drop twice. */
+    ackDrops: body => service.dropbox.ack(body.ids),
     setMeta: body => service.setMeta(body.patch),
     setCategories: body => service.setCategories(body.categories),
     /** Full-domain dump — the importable counterpart of the settings export. */

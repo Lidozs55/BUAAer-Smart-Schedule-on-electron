@@ -130,6 +130,10 @@ window.__ModuleLoader__.load({
 .bsch-queue { display: flex; flex-direction: column; gap: 6px; padding: 8px; flex: 1; min-height: 0; overflow-y: auto; }
 .bsch-queue-item { display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: var(--dsw-radius-md); border: 0.5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-layer-1); }
 .bsch-queue-item-bar { display: flex; gap: 4px; align-items: center; }
+.bsch-attachment { display: flex; gap: 8px; align-items: center; min-width: 0; }
+.bsch-attachment-img { flex: none; width: 88px; height: 88px; object-fit: contain; border-radius: var(--dsw-radius-sm); border: 0.5px solid var(--dsw-alias-border-l1); background: var(--dsw-alias-bg-base); }
+.bsch-attachment-meta { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.bsch-attachment-name { font-size: 12px; overflow-wrap: anywhere; }
 .bsch-queue-empty { padding: 24px 16px; text-align: center; color: var(--dsw-alias-label-secondary); }
 .bsch-preview { margin: 0 8px 8px; padding: 8px; border-radius: var(--dsw-radius-md); background: var(--dsw-alias-bg-layer-2); font-size: 12px; white-space: pre-wrap; max-height: 120px; overflow-y: auto; }
 

@@ -157,7 +157,7 @@ window.__ModuleLoader__.load({
     }
 
     function ScheduleTab(props) {
-      const { t, api, timer, refresh, data, undoApi, weekStart, setWeekStart } = props
+      const { t, api, timer, refresh, data, undoApi, weekStart, setWeekStart, renderSlot } = props
       const [viewMode, setViewMode] = useState(initialViewMode)
       const dayCount = viewMode === 'day' ? 1 : 7
       const step = viewMode === 'day' ? 1 : 7
@@ -340,6 +340,7 @@ window.__ModuleLoader__.load({
           draft: editor.draft,
           undoApi,
           refresh: refreshBoth,
+          renderSlot,
           onClose: () => setEditor(null),
           onSaved: refreshBoth,
         }) : null,
@@ -385,7 +386,7 @@ window.__ModuleLoader__.load({
      *   share: `env` = `{ api, timer }`.
      */
     function CalendarPanel(props) {
-      const { t, env } = props
+      const { t, env, renderSlot } = props
       const [tab, setTab] = useState('schedule')
       const root = useScheduleData(env.api, env.timer)
       const undoApi = useUndo(root.refresh)
@@ -417,7 +418,7 @@ window.__ModuleLoader__.load({
             : tab === 'schedule'
               ? h(ScheduleTab, {
                   t, api: env.api, timer: env.timer, data: root.data,
-                  refresh: refreshAll, undoApi, weekStart, setWeekStart,
+                  refresh: refreshAll, undoApi, weekStart, setWeekStart, renderSlot,
                 })
               : tab === 'tasks'
                 ? h(TasksTab, {

@@ -51,10 +51,26 @@ window.__ModuleLoader__.load({
 
         ctx.effect(() => ctx.locale.register(NS, { zh: core.zh, en: core.en }), 'schedule: dictionaries')
         const t = ctx.locale.bind(NS)
+        const api = core.createApi()
+
+        // Shared inject shares: the /api client, a releasable timer, and
+        // the session helpers the clipboard panel and pet-drop hand-off need
+        // (D-2).
+        const env = {
+          api,
+          timer: ctx.timer,
+          openSession: id => { try { ctx.uiWorkspace.openSession(id) } catch { /* panel gone */ } },
+          session: {
+            create: request => ctx.remote.session.create(request),
+            prompt: request => ctx.remote.session.prompt(request),
+          },
+        }
 
         // Clipboard capture is global, like the original app: copying text
-        // while any other panel/session is open still fills the queue.
-        ctx.effect(() => clipboard.startClipboardMonitor(), 'schedule: clipboard monitor')
+        // while any other panel/session is open still fills the queue. The
+        // same monitor polls confirmed pet drops and opens a fresh Agent
+        // session for them — pet drops never enter the clipboard queue.
+        ctx.effect(() => clipboard.startClipboardMonitor({ api, env }), 'schedule: clipboard monitor')
 
         ctx.effect(() => {
           const el = document.createElement('style')
@@ -64,17 +80,6 @@ window.__ModuleLoader__.load({
           return () => el.remove()
         }, 'schedule: styles')
 
-        // Shared inject shares: the /api client, a releasable timer, and
-        // the session helpers the clipboard panel needs (D-2).
-        const env = {
-          api: core.createApi(),
-          timer: ctx.timer,
-          openSession: id => { try { ctx.uiWorkspace.openSession(id) } catch { /* panel gone */ } },
-          session: {
-            create: request => ctx.remote.session.create(request),
-            prompt: request => ctx.remote.session.prompt(request),
-          },
-        }
         const share = () => ({ env })
 
         // Core-owned reminder surface: poll the host-derived set and raise a
@@ -86,7 +91,12 @@ window.__ModuleLoader__.load({
         }), 'schedule: reminder notifications')
 
         ctx.slots.inject('main', () => ctx.slots.register(
-          { name: 'main', key: 'schedule-calendar', locale: NS, inject: share }, CalendarPanel))
+          { name: 'main', key: 'schedule-calendar', locale: NS, inject: share,
+            // Source adapters can attach actions to an opened entry (e.g. BUAA's
+            // remote check-in). The editor renders this list with the entry as
+            // owner props; the core itself never names a source.
+            children: { 'schedule.entry.actions': { kind: 'list', scope: 'root' } } },
+          CalendarPanel))
         // The list id must equal the main key it selects.
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register(
           { name: 'sidebar.panellist', id: 'schedule-calendar', order: 40, locale: NS, label: () => t('panel.calendar') },
