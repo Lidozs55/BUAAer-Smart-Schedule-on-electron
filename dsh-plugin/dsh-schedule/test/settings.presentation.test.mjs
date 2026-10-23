@@ -110,13 +110,16 @@ test('BUAA explains automatic homework refresh and where to check in for each se
   }
 })
 
-test('gacha explains estimates and shared official corrections beside the Agent action', async () => {
+test('gacha explains estimates and correction submission without remote impact details', async () => {
   for (const locale of ['zh', 'en']) {
     const app = await sourceApp('gacha', gachaState, { locale })
     const tree = app.render()
     const hint = find(tree, n => n.props.id === 'bsch-gacha-agent-hint')
     assert.ok(hint)
-    assert.match(hint.children[0], locale === 'zh' ? /公共数据源.*所有用户/ : /shared data source.*all users/i)
+    assert.equal(hint.children[0], locale === 'zh'
+      ? '官方时间校正会提交至数据源服务器。'
+      : 'Official-time corrections are submitted to the data source server.')
+    assert.doesNotMatch(hint.children[0], /所有用户|不只本机|公共|all users|shared|not just/i)
     assert.equal(find(tree, n => n.type === 'button' && n.children.includes(app.module[locale]['settings.agent'])).props['aria-describedby'], hint.props.id)
     assert.match(app.module[locale]['settings.hint'], /gacha-calendar.*≈/)
   }

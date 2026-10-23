@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
     const zh = {
       'settings.title': '二游前瞻',
       'settings.hint': '数据来自 gacha-calendar，≈ 表示推算。仅前瞻直播加入日程，推算的前瞻时间可调整。',
-      'settings.agentHint': 'Agent 校正官方时间时会回写公共数据源，影响所有用户，不只本机。',
+      'settings.agentHint': '官方时间校正会提交至数据源服务器。',
       'settings.disabled': '已关闭，不写入日程',
       'settings.waiting': '等待首次刷新…',
       'settings.unknown': '待定',
@@ -87,7 +87,7 @@ window.__ModuleLoader__.load({
     const en = {
       'settings.title': 'Gacha previews',
       'settings.hint': 'Data from gacha-calendar; ≈ means estimated. Only preview streams enter the calendar. Estimated preview times are editable.',
-      'settings.agentHint': 'When the Agent corrects official times, it writes to the shared data source for all users, not just this device.',
+      'settings.agentHint': 'Official-time corrections are submitted to the data source server.',
       'settings.disabled': 'Off — no entries',
       'settings.waiting': 'Waiting for the first refresh…',
       'settings.unknown': 'TBD',
