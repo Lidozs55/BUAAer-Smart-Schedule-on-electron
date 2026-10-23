@@ -94,6 +94,34 @@ test('gacha switches preserve game identity and errors have alert semantics', as
   assert.ok(find(tree, n => n.props.role === 'alert' && n.children.includes('Request failed')))
 })
 
+test('BUAA explains automatic homework refresh and where to check in for each session state', async () => {
+  for (const locale of ['zh', 'en']) {
+    for (const connected of [false, true]) {
+      const session = connected ? { username: 'test-student', termName: '2026 秋季' } : null
+      const app = await sourceApp('buaa', { ...buaaState, spocSession: session, signinSession: session }, { locale })
+      const text = nodes(app.render()).flatMap(n => n.children.filter(c => typeof c === 'string')).join(' ')
+      assert.match(text, locale === 'zh' ? /30 分钟/ : /30 minutes/)
+      assert.match(text, locale === 'zh' ? /同名手建待办.*截止时间/ : /matching manual tasks.*due dates/i)
+      assert.match(text, locale === 'zh' ? /当天.*课程条目/ : /today.*course entries/)
+    }
+    const disabled = await sourceApp('buaa', { ...buaaState, spocEnabled: false }, { locale })
+    const text = nodes(disabled.render()).flatMap(n => n.children.filter(c => typeof c === 'string')).join(' ')
+    assert.match(text, locale === 'zh' ? /保留已有待办/ : /existing tasks are kept/i)
+  }
+})
+
+test('gacha explains estimates and shared official corrections beside the Agent action', async () => {
+  for (const locale of ['zh', 'en']) {
+    const app = await sourceApp('gacha', gachaState, { locale })
+    const tree = app.render()
+    const hint = find(tree, n => n.props.id === 'bsch-gacha-agent-hint')
+    assert.ok(hint)
+    assert.match(hint.children[0], locale === 'zh' ? /公共数据源.*所有用户/ : /shared data source.*all users/i)
+    assert.equal(find(tree, n => n.type === 'button' && n.children.includes(app.module[locale]['settings.agent'])).props['aria-describedby'], hint.props.id)
+    assert.match(app.module[locale]['settings.hint'], /gacha-calendar.*≈/)
+  }
+})
+
 test('source settings retain short actionable safety information without implementation jargon', async () => {
   const buaa = await sourceApp('buaa', buaaState)
   const gacha = await sourceApp('gacha', gachaState)

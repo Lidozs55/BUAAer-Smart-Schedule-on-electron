@@ -58,7 +58,8 @@ window.__ModuleLoader__.load({
 
     const zh = {
       'settings.title': '二游前瞻',
-      'settings.hint': '仅前瞻直播加入日程，推算的前瞻时间可调整。',
+      'settings.hint': '数据来自 gacha-calendar，≈ 表示推算。仅前瞻直播加入日程，推算的前瞻时间可调整。',
+      'settings.agentHint': 'Agent 校正官方时间时会回写公共数据源，影响所有用户，不只本机。',
       'settings.disabled': '已关闭，不写入日程',
       'settings.waiting': '等待首次刷新…',
       'settings.unknown': '待定',
@@ -85,7 +86,8 @@ window.__ModuleLoader__.load({
 
     const en = {
       'settings.title': 'Gacha previews',
-      'settings.hint': 'Only preview streams enter the calendar. Estimated preview times are editable.',
+      'settings.hint': 'Data from gacha-calendar; ≈ means estimated. Only preview streams enter the calendar. Estimated preview times are editable.',
+      'settings.agentHint': 'When the Agent corrects official times, it writes to the shared data source for all users, not just this device.',
       'settings.disabled': 'Off — no entries',
       'settings.waiting': 'Waiting for the first refresh…',
       'settings.unknown': 'TBD',
@@ -242,9 +244,10 @@ window.__ModuleLoader__.load({
         h('div', { className: 'bsch-settings-meta' },
           h('span', null, t('settings.last').replace('{time}', last)),
           h('span', null, state?.watch?.enabled ? t('settings.watchOn') : t('settings.watchOff'))),
+        h('div', { className: 'bsch-hint', id: 'bsch-gacha-agent-hint' }, t('settings.agentHint')),
         h('div', { className: 'bsch-settings-actions' },
           h('button', {
-            className: 'bsch-btn', disabled: busy, onClick: () => void openAgent(),
+            className: 'bsch-btn', disabled: busy, 'aria-describedby': 'bsch-gacha-agent-hint', onClick: () => void openAgent(),
           }, t('settings.agent')),
           h('button', {
             className: 'bsch-btn is-primary', disabled: busy || state?.refreshing === true, onClick: () => void refreshAll(),

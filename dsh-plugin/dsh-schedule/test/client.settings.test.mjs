@@ -151,6 +151,22 @@ test('core settings share semantic section headings and an explicitly labelled t
   assert.ok(find(tree, n => n.props.id === term.props['aria-describedby']))
 })
 
+test('backup settings explain merge rules and excluded source settings in both languages', async () => {
+  const app = await harness(), Settings = app.module('settings').SettingsSection
+  for (const locale of ['zh', 'en']) {
+    const translations = app.module('core')[locale]
+    const tree = app.render(Settings, { ...propsWith(snapshotApi(categories)), t: key => translations[key] ?? key })
+    const hint = find(tree, n => n.props.id === 'bsch-backup-hint')
+    assert.ok(hint)
+    assert.equal(hint.children[0], translations['settings.backupHint'])
+    assert.match(hint.children[0], locale === 'zh' ? /合并.*跳过.*不含.*来源设置/ : /merge.*skip.*exclude.*source settings/i)
+    assert.match(translations['settings.clearAllHint'], locale === 'zh' ? /同步仍会.*重新生成/ : /sync.*recreate/i)
+    for (const key of ['settings.export', 'settings.import']) {
+      assert.equal(find(tree, n => n.type === 'button' && n.children.includes(translations[key])).props['aria-describedby'], hint.props.id)
+    }
+  }
+})
+
 test('backup import uses a keyboard-accessible button and clearing still requires confirmation', async () => {
   const app = await harness(), Settings = app.module('settings').SettingsSection
   let picked = 0, cleared = 0
