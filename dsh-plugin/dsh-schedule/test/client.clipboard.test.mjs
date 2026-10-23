@@ -76,10 +76,12 @@ test('a confirmed pet drop opens a session directly and is acked once', async ()
   const prompts = []
   const opened = []
   const acked = []
+  const ackSessions = []
   const api = {
     listConfirmedDrops: async () => confirmed,
-    ackDrops: async ids => {
+    ackDrops: async (ids, sessionId) => {
       acked.push(...ids)
+      ackSessions.push(sessionId)
       confirmed = confirmed.filter(row => !ids.includes(row.id))
       return ids.length
     },
@@ -108,10 +110,12 @@ test('a confirmed pet drop opens a session directly and is acked once', async ()
   assert.equal(prompts[0].sessionId, 's1')
   assert.equal(prompts[0].content[0].type, 'text')
   assert.match(prompts[0].content[0].text, /明天 14:00 交实验报告/)
-  assert.match(prompts[0].content[0].text, /在最终写入前/)
-  assert.match(prompts[0].content[0].text, /等我明确确认/)
+  assert.match(prompts[0].content[0].text, /有明确时间的直接写入/)
+  assert.match(prompts[0].content[0].text, /两选项的是\/否问题/)
+  assert.doesNotMatch(prompts[0].content[0].text, /在最终写入前|草案/)
   assert.deepEqual(opened, ['s1'])
   assert.deepEqual(acked, ['drop-1'])
+  assert.deepEqual(ackSessions, ['s1']) // the pet bridge follows this session
   assert.deepEqual(confirmed, [])
 })
 
@@ -251,6 +255,6 @@ test('a text-only queue still sends one text content part', async () => {
   assert.equal(prompts[0].content.length, 1)
   assert.equal(prompts[0].content[0].type, 'text')
   assert.match(prompts[0].content[0].text, /明天 9 点开会/)
-  assert.match(prompts[0].content[0].text, /在最终写入前/)
+  assert.match(prompts[0].content[0].text, /有明确时间的直接写入/)
 })
 
